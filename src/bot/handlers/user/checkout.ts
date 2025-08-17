@@ -1,14 +1,23 @@
+// src/bot/handlers/user/checkout.ts
 import { Markup } from 'telegraf';
 import { db } from '../../../lib/db';
 import { OrdersService } from '../../../services/orders.service';
 import { money } from '../../../lib/money';
+import { Publisher } from '../../../lib/publisher';
 
 // ---- Helpers / small state machine ----
+type Mode = 'cart' | 'buy_now';
 type Step = 'idle' | 'need_phone' | 'need_city' | 'need_place' | 'need_ref' | 'confirm_address';
-type CheckoutState = { step: Step; draft: { city?: string; place?: string; ref?: string } };
-const states = new Map<string, CheckoutState>(); // key = tgId
 
-const awaitingPhone = new Set<string>(); // we keep this separate because Telegram contact events are global
+type CheckoutState = {
+  mode: Mode;
+  product?: { id: string; title: string; price: number; currency: string }; // only for buy-now
+  step: Step;
+  draft: { city?: string; place?: string; ref?: string };
+};
+
+const states = new Map<string, CheckoutState>(); // key = tgId
+const awaitingPhone = new Set<string>(); // contact events are global in Telegram
 
 function tgIdOf(ctx: any): string {
   const id = ctx.from?.id;
@@ -16,9 +25,28 @@ function tgIdOf(ctx: any): string {
   return String(id);
 }
 
-function setState(id: string, s: CheckoutState) { states.set(id, s); }
-function getState(id: string) { return states.get(id); }
-function clearState(id: string) { states.delete(id); awaitingPhone.delete(id); }
+// SAFE helpers: merge patches and provide defaults so older calls keep working
+function ensure(state?: Partial<CheckoutState>): CheckoutState {
+  return {
+    mode: state?.mode ?? 'cart',
+    step: state?.step ?? 'idle',
+    draft: state?.draft ?? {},
+    product: state?.product,
+  };
+}
+function setState(id: string, patch: Partial<CheckoutState>) {
+  const prev = states.get(id);
+  const next = ensure({ ...prev, ...patch });
+  states.set(id, next);
+}
+function getState(id: string) {
+  const s = states.get(id);
+  return s ? ensure(s) : undefined;
+}
+function clearState(id: string) {
+  states.delete(id);
+  awaitingPhone.delete(id);
+}
 
 function formatAddress(u: { city?: string | null; place?: string | null; specialReference?: string | null }) {
   const main = [u.city, u.place].filter(Boolean).join(', ');
@@ -51,39 +79,79 @@ async function showConfirm(ctx: any, user: any) {
   );
 }
 
+/** NEW: after we have (or just saved) a phone, go straight to address steps or confirm */
+async function proceedToAddressOrConfirm(ctx: any, id: string) {
+  const user = await db.user.findUnique({ where: { tgId: id } });
+  if (!user) {
+    setState(id, { step: 'need_city' });
+    return askCity(ctx);
+  }
+
+  const needsCity  = !user.city;
+  const needsPlace = !user.place;
+  const needsRef   = !user.specialReference;
+
+  if (needsCity || needsPlace || needsRef) {
+    const nextStep: Step = needsCity ? 'need_city' : (needsPlace ? 'need_place' : 'need_ref');
+    setState(id, { step: nextStep });
+    if (nextStep === 'need_city')  return askCity(ctx);
+    if (nextStep === 'need_place') return askPlace(ctx);
+    return askRef(ctx);
+  }
+
+  setState(id, { step: 'confirm_address' });
+  return showConfirm(ctx, user);
+}
+
 // ---- Main flow ----
 export function registerCheckoutFlow(bot: any, adminIds: string[] = []) {
-  // ENTRY: From cart footer
+  // ENTRY (Cart): From cart footer
   bot.action('CHECKOUT', async (ctx: any) => {
     await ctx.answerCbQuery();
     const id = tgIdOf(ctx);
-    const user = await db.user.findUnique({ where: { tgId: id } });
+    setState(id, { mode: 'cart', step: 'idle', draft: {} });
 
+    const user = await db.user.findUnique({ where: { tgId: id } });
     if (!user) return ctx.reply('Please /start first.');
 
     if (!user.phone) {
-      setState(id, { step: 'need_phone', draft: {} });
+      setState(id, { step: 'need_phone' });
       return askPhone(ctx, id);
     }
 
-    const needsCity = !user.city;
-    const needsPlace = !user.place;
-    const needsRef = !user.specialReference;
-
-    if (needsCity || needsPlace || needsRef) {
-      const nextStep: Step = needsCity ? 'need_city' : needsPlace ? 'need_place' : 'need_ref';
-      setState(id, { step: nextStep, draft: {} });
-      if (nextStep === 'need_city') return askCity(ctx);
-      if (nextStep === 'need_place') return askPlace(ctx);
-      return askRef(ctx);
-    }
-
-    // Have phone + full address → confirm
-    setState(id, { step: 'confirm_address', draft: {} });
-    return showConfirm(ctx, user);
+    // ✅ Go straight into address steps/confirm
+    return proceedToAddressOrConfirm(ctx, id);
   });
 
-    // PHONE via contact
+  // ENTRY (Buy Now): from product card button
+  bot.action(/BUY_(.+)/, async (ctx: any) => {
+    await ctx.answerCbQuery();
+    const id = tgIdOf(ctx);
+    const productId = ctx.match[1];
+
+    const p = await db.product.findUnique({ where: { id: productId } });
+    if (!p || !p.isActive) return ctx.reply('This product is unavailable.');
+
+    // seed buy-now state
+    setState(id, {
+      mode: 'buy_now',
+      product: { id: p.id, title: p.title, price: p.price, currency: p.currency },
+      step: 'idle',
+      draft: {},
+    });
+
+    const user = await db.user.findUnique({ where: { tgId: id } });
+
+    if (!user?.phone) {
+      setState(id, { step: 'need_phone' });
+      return askPhone(ctx, id);
+    }
+
+    // ✅ Go straight into address steps/confirm
+    return proceedToAddressOrConfirm(ctx, id);
+  });
+
+  // PHONE via contact
   bot.on('contact', async (ctx: any) => {
     const id = tgIdOf(ctx);
     if (!awaitingPhone.has(id)) return;
@@ -91,38 +159,20 @@ export function registerCheckoutFlow(bot: any, adminIds: string[] = []) {
     const phone = ctx.message?.contact?.phone_number;
     if (!phone) return;
 
+    // (optional) make sure they shared their own contact
+    const contactUserId = String(ctx.message?.contact?.user_id || '');
+    if (contactUserId && contactUserId !== id) {
+      return ctx.reply('Please share *your* contact using the button.', { parse_mode: 'Markdown' });
+    }
+
     awaitingPhone.delete(id);
     await db.user.update({ where: { tgId: id }, data: { phone } });
 
     try { await ctx.reply('✅ Phone saved!', Markup.removeKeyboard()); } catch {}
 
-    // ---- NEW: immediately continue to address step (or confirm if already present)
-    const user = await db.user.findUnique({ where: { tgId: id } });
-
-    // Guard: if somehow user is missing, restart flow safely
-    if (!user) {
-      setState(id, { step: 'need_city', draft: {} });
-      return askCity(ctx);
-    }
-
-    const needsCity = !user.city;
-    const needsPlace = !user.place;
-    const needsRef = !user.specialReference;
-
-    if (needsCity || needsPlace || needsRef) {
-      const nextStep: Step = needsCity ? 'need_city' : needsPlace ? 'need_place' : 'need_ref';
-      setState(id, { step: nextStep, draft: {} });
-
-      if (nextStep === 'need_city') return askCity(ctx);
-      if (nextStep === 'need_place') return askPlace(ctx);
-      return askRef(ctx);
-    }
-
-    // All address parts already exist → confirm/edit
-    setState(id, { step: 'confirm_address', draft: {} });
-    return showConfirm(ctx, user);
+    // ✅ Immediately continue (no extra "Checkout" tap)
+    return proceedToAddressOrConfirm(ctx, id);
   });
-
 
   // ADDRESS text capture (city → place → ref)
   bot.on('text', async (ctx: any, next: any) => {
@@ -134,34 +184,29 @@ export function registerCheckoutFlow(bot: any, adminIds: string[] = []) {
     if (!text) return next();
 
     if (st.step === 'need_city') {
-      st.draft.city = text;
-      st.step = 'need_place';
-      setState(id, st);
+      setState(id, { draft: { ...st.draft, city: text }, step: 'need_place' });
       return askPlace(ctx);
     }
 
     if (st.step === 'need_place') {
-      st.draft.place = text;
-      st.step = 'need_ref';
-      setState(id, st);
+      setState(id, { draft: { ...st.draft, place: text }, step: 'need_ref' });
       return askRef(ctx);
     }
 
     if (st.step === 'need_ref') {
-      st.draft.ref = text;
+      const draft = { ...st.draft, ref: text };
 
       // Persist to User
       await db.user.update({
         where: { tgId: id },
         data: {
-          city: st.draft.city,
-          place: st.draft.place,
-          specialReference: st.draft.ref,
+          city: draft.city,
+          place: draft.place,
+          specialReference: draft.ref,
         },
       });
 
-      st.step = 'confirm_address';
-      setState(id, st);
+      setState(id, { draft, step: 'confirm_address' });
 
       const user = await db.user.findUnique({ where: { tgId: id } });
       return ctx.reply(
@@ -188,7 +233,20 @@ export function registerCheckoutFlow(bot: any, adminIds: string[] = []) {
 
     const shippingAddress = formatAddress(user);
     try {
-      const order = await OrdersService.checkoutFromCartWithDetails(id, { shippingAddress });
+      const st = getState(id);
+      if (!st) return ctx.reply('Session expired. Please try again.');
+
+      let order;
+      if (st.mode === 'buy_now') {
+        if (!st.product) return ctx.reply('Product missing. Please try again.');
+        order = await OrdersService.createSingleItemPending(id, st.product, { shippingAddress });
+      } else {
+        order = await OrdersService.checkoutFromCartWithDetails(id, { shippingAddress });
+      }
+
+      // notify admin group (best-effort)
+      try { await Publisher.notifyOrderNew(ctx.bot ?? ctx, order.id); } catch {}
+
       clearState(id);
 
       await ctx.editMessageText(
@@ -201,7 +259,7 @@ export function registerCheckoutFlow(bot: any, adminIds: string[] = []) {
         { parse_mode: 'Markdown' }
       );
 
-      // Admin notifications (best-effort)
+      // Optional: per-admin DM loop if you want
       for (const admin of adminIds) {
         try {
           await ctx.telegram.sendMessage(

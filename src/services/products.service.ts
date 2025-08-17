@@ -37,12 +37,12 @@ export const ProductsService = {
     return db.product.delete({ where: { id } });
   },
 
-  update(id: string, patch: Partial<{ title: string; price: number; stock: number; photoUrl: string; categoryId: string }>) {
+  update(id: string, patch: Partial<{ title: string; price: number; stock: number; photoUrl: string | null; photoFileId: string | null; categoryId: string; description: string | null }>) {
     return db.product.update({ where: { id }, data: patch });
   },
 
-  async create(data: { title: string; price: number; stock: number; photoUrl?: string | null; categoryId?: string | null; currency?: string }) {
-    return db.product.create({ data: { currency: 'USD', ...data } });
+  async create(data: { title: string; price: number; stock: number; photoUrl?: string | null; photoFileId?: string | null; description?: string | null; categoryId?: string | null; currency?: string }) {
+   return db.product.create({ data: { currency: 'USD', ...data } });
   },
 
   listCategories() {

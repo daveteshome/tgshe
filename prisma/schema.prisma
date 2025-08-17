@@ -42,6 +42,13 @@ model Product {
   photoUrl   String?
   stock      Int        @default(0)
   isActive   Boolean    @default(true)
+
+  photoFileId     String?    // Telegram photo file_id from admin DM
+  groupMessageId  String?    // message id of the post in the group
+  groupChatId     String?    // store where it was posted (lets you support multiple groups later)
+
+  description     String?
+  
   categoryId String?
   category   Category?  @relation(fields: [categoryId], references: [id])
   cartItems  CartItem[]

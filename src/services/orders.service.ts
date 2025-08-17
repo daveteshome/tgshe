@@ -12,20 +12,27 @@ const ALLOWED: Record<string, string[]> = {
 
 
 export const OrdersService = {
-  createSingleItemPending(tgId: string, product: { id: string; title: string; price: number; currency: string; }) {
-    return db.order.create({
-      data: {
-        userId: tgId,
-        total: product.price,
-        currency: product.currency,
-        status: 'pending',
-        items: {
-          create: [{ productId: product.id, title: product.title, price: product.price, qty: 1 }]
-        }
-      },
-      include: { items: true }
-    });
-  },
+  createSingleItemPending(
+  tgId: string,
+  product: { id: string; title: string; price: number; currency: string; },
+  opts: { shippingAddress?: string | null; note?: string | null } = {}
+) {
+  return db.order.create({
+    data: {
+      userId: tgId,
+      total: product.price,
+      currency: product.currency,
+      status: 'pending',
+      shippingAddress: opts.shippingAddress || null, 
+      notes: opts.note || null,                     
+      items: {
+        create: [{ productId: product.id, title: product.title, price: product.price, qty: 1 }]
+      }
+    },
+    include: { items: true }
+  });
+},
+
   listUserOrders(tgId: string, take = 5) {
     return db.order.findMany({
       where: { userId: tgId },

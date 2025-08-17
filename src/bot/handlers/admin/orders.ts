@@ -3,6 +3,9 @@ import { Markup } from 'telegraf';
 import { OrdersService } from '../../../services/orders.service';
 import { money } from '../../../lib/money';
 import { isAdmin } from '../../middlewares/isAdmin';
+import { db } from '../../../lib/db';
+import { Publisher } from '../../../lib/publisher';
+
 
 import { formatUserLabel } from '../../format/user';
 
@@ -94,14 +97,41 @@ export const registerAdminOrders = (bot: any) => {
   });
 
   // Status updates
-  bot.action(/A_SET_([a-z0-9]+)_(pending|confirmed|shipped|delivered|canceled)/, isAdmin(), async (ctx: any) => {
-    await ctx.answerCbQuery();
-    const [, id, next] = ctx.match;
-    try {
-      await OrdersService.setStatus(id, next);
-      await ctx.reply(`✅ Order ${id.slice(0,6)} → ${next}`);
-    } catch (e: any) {
-      await ctx.reply(`❌ ${e.message || 'Failed to update status'}`);
-    }
+  // Status updates
+bot.action(/A_SET_([a-z0-9]+)_(pending|confirmed|shipped|delivered|canceled)/, isAdmin(), async (ctx: any) => {
+  await ctx.answerCbQuery();
+  const [, id, next] = ctx.match;
+
+  // Load current order to know the user & current status
+  const before = await db.order.findUnique({
+    where: { id },
+    include: { user: true },
   });
+  if (!before) return ctx.reply('Order not found');
+
+  try {
+    // Transition (guards + stock decrement handled inside service)
+    await OrdersService.setStatus(id, next);
+
+    await ctx.reply(`✅ Order ${id.slice(0,6)} → ${next}`);
+
+    // DM the buyer about the change (best-effort)
+    try {
+      await ctx.telegram.sendMessage(
+        before.userId,
+        `📦 Your order #${id.slice(0,6)} is now *${next}*.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch {}
+
+    // Notify admin group about the change (best-effort)
+    try {
+      await Publisher.notifyOrderStatus(ctx.bot ?? ctx, id, before.status, next);
+    } catch {}
+
+  } catch (e: any) {
+    await ctx.reply(`❌ ${e.message || 'Failed to update status'}`);
+  }
+});
+
 };

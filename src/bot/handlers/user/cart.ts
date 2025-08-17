@@ -5,6 +5,13 @@ import { money } from '../../../lib/money';
 
 const PLACEHOLDER = 'https://placehold.co/800x500/png?text=Product';
 
+// helper: choose Telegram photo input
+function photoInput(p: { photoFileId?: string | null; photoUrl?: string | null }) {
+  if (p.photoFileId) return p.photoFileId; // best: Telegram-hosted
+  if (p.photoUrl && /^https?:\/\//i.test(p.photoUrl)) return { url: p.photoUrl };
+  return { url: PLACEHOLDER };
+}
+
 export const registerCartHandlers = (bot: any) => {
   // Add to cart (product card button)
   bot.action(/CART_ADD_(.+)/, async (ctx: any) => {
@@ -32,11 +39,21 @@ export const registerCartHandlers = (bot: any) => {
         [Markup.button.callback('➖', `CART_DEC_${it.id}`), Markup.button.callback('➕', `CART_INC_${it.id}`)],
       ]);
 
-      const url = it.product.photoUrl?.startsWith('http') ? it.product.photoUrl : PLACEHOLDER;
+      const input = photoInput(it.product);
+
       try {
-        await ctx.replyWithPhoto({ url }, { caption: line, reply_markup: kb.reply_markup });
-      } catch {
-        await ctx.reply(line, kb);
+        await ctx.replyWithPhoto(input as any, { caption: line, reply_markup: kb.reply_markup });
+      } catch (err) {
+        // fallback if file_id expired or url failed
+        try {
+          const fallback =
+            it.product.photoUrl && /^https?:\/\//i.test(it.product.photoUrl)
+              ? { url: it.product.photoUrl }
+              : { url: PLACEHOLDER };
+          await ctx.replyWithPhoto(fallback as any, { caption: line, reply_markup: kb.reply_markup });
+        } catch {
+          await ctx.reply(line, kb);
+        }
       }
     }
 

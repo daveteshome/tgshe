@@ -11,6 +11,7 @@ import { registerAdminProducts } from './bot/handlers/admin/products';
 import { registerProfileHandlers } from './bot/handlers/user/profile';
 import { registerCheckoutFlow } from './bot/handlers/user/checkout';
 import { registerCartHandlers } from './bot/handlers/user/cart';
+import { registerAdminProductPhoto } from './bot/handlers/admin/product_photo';
 
 
 
@@ -24,7 +25,7 @@ export function createApp() {
   
   registerProfileHandlers(bot);
  
-  registerBuyNow(bot);
+  //registerBuyNow(bot);
 
 
   registerViewProducts(bot);
@@ -34,7 +35,7 @@ export function createApp() {
 
   registerAdminOrders(bot);
   registerAdminProducts(bot);
-
+  registerAdminProductPhoto(bot as any);
 
   const WEBHOOK_PATH = '/tg/webhook';
   app.use(bot.webhookCallback(WEBHOOK_PATH));
