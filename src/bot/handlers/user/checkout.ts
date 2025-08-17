@@ -1,98 +1,224 @@
-// src/bot/handlers/user/checkout.ts
 import { Markup } from 'telegraf';
 import { db } from '../../../lib/db';
 import { OrdersService } from '../../../services/orders.service';
 import { money } from '../../../lib/money';
 
-// Track per-user steps
-const awaitingPhone = new Set<string>();
-const awaitingAddress = new Set<string>();
+// ---- Helpers / small state machine ----
+type Step = 'idle' | 'need_phone' | 'need_city' | 'need_place' | 'need_ref' | 'confirm_address';
+type CheckoutState = { step: Step; draft: { city?: string; place?: string; ref?: string } };
+const states = new Map<string, CheckoutState>(); // key = tgId
 
-function askForPhone(ctx: any, tgId: string) {
-  awaitingPhone.add(tgId);
-  // Contact request needs a ReplyKeyboard (not inline)
+const awaitingPhone = new Set<string>(); // we keep this separate because Telegram contact events are global
+
+function tgIdOf(ctx: any): string {
+  const id = ctx.from?.id;
+  if (!id) throw new Error('No from.id');
+  return String(id);
+}
+
+function setState(id: string, s: CheckoutState) { states.set(id, s); }
+function getState(id: string) { return states.get(id); }
+function clearState(id: string) { states.delete(id); awaitingPhone.delete(id); }
+
+function formatAddress(u: { city?: string | null; place?: string | null; specialReference?: string | null }) {
+  const main = [u.city, u.place].filter(Boolean).join(', ');
+  const ref = u.specialReference ? `\nRef: ${u.specialReference}` : '';
+  return (main || '—') + ref;
+}
+
+async function askPhone(ctx: any, id: string) {
+  awaitingPhone.add(id);
   return ctx.reply(
-    'Please share your phone number to proceed:',
-    Markup.keyboard([Markup.button.contactRequest('Share phone 📲')])
-      .oneTime()
-      .resize()
+    '📞 Please share your phone number to continue.',
+    Markup.keyboard([[Markup.button.contactRequest('📱 Share phone')], ['❌ Cancel']]).oneTime().resize()
   );
 }
 
-function askForAddress(ctx: any, tgId: string) {
-  awaitingAddress.add(tgId);
+async function askCity(ctx: any) { return ctx.reply('🏙️ Which *city* should we deliver to?', { parse_mode: 'Markdown' }); }
+async function askPlace(ctx: any) { return ctx.reply('📍 Which *area/place* (e.g., neighborhood)?', { parse_mode: 'Markdown' }); }
+async function askRef(ctx: any) { return ctx.reply('🧭 Any *special reference* / landmark for directions?', { parse_mode: 'Markdown' }); }
+
+async function showConfirm(ctx: any, user: any) {
   return ctx.reply(
-    'Great! Now send your delivery address or note (one message).',
-    { reply_markup: { force_reply: true, selective: true } }
+    `✅ Details found:\n\n*Phone:* ${user.phone || '—'}\n*Address:*\n${formatAddress(user)}`,
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Use as is', 'CHK_USE_ADDR')],
+        [Markup.button.callback('✏️ Edit address', 'CHK_EDIT_ADDR')],
+      ])
+    }
   );
 }
 
+// ---- Main flow ----
 export function registerCheckoutFlow(bot: any, adminIds: string[] = []) {
-  // Entry point from cart footer
+  // ENTRY: From cart footer
   bot.action('CHECKOUT', async (ctx: any) => {
     await ctx.answerCbQuery();
-    const tgId = String(ctx.from.id);
-    const user = await db.user.findUnique({ where: { tgId } });
+    const id = tgIdOf(ctx);
+    const user = await db.user.findUnique({ where: { tgId: id } });
 
-    if (!user?.phone) {
-      return askForPhone(ctx, tgId);
+    if (!user) return ctx.reply('Please /start first.');
+
+    if (!user.phone) {
+      setState(id, { step: 'need_phone', draft: {} });
+      return askPhone(ctx, id);
     }
-    return askForAddress(ctx, tgId);
+
+    const needsCity = !user.city;
+    const needsPlace = !user.place;
+    const needsRef = !user.specialReference;
+
+    if (needsCity || needsPlace || needsRef) {
+      const nextStep: Step = needsCity ? 'need_city' : needsPlace ? 'need_place' : 'need_ref';
+      setState(id, { step: nextStep, draft: {} });
+      if (nextStep === 'need_city') return askCity(ctx);
+      if (nextStep === 'need_place') return askPlace(ctx);
+      return askRef(ctx);
+    }
+
+    // Have phone + full address → confirm
+    setState(id, { step: 'confirm_address', draft: {} });
+    return showConfirm(ctx, user);
   });
 
-  // Handle contact share (comes from the ReplyKeyboard button)
+    // PHONE via contact
   bot.on('contact', async (ctx: any) => {
-    const tgId = String(ctx.from.id);
-    if (!awaitingPhone.has(tgId)) return; // ignore unrelated contacts
+    const id = tgIdOf(ctx);
+    if (!awaitingPhone.has(id)) return;
 
     const phone = ctx.message?.contact?.phone_number;
     if (!phone) return;
 
-    // Save phone and proceed
-    awaitingPhone.delete(tgId);
-    await db.user.update({ where: { tgId }, data: { phone } });
+    awaitingPhone.delete(id);
+    await db.user.update({ where: { tgId: id }, data: { phone } });
 
-    // Remove the reply keyboard
     try { await ctx.reply('✅ Phone saved!', Markup.removeKeyboard()); } catch {}
 
-    // Continue to address automatically
-    return askForAddress(ctx, tgId);
+    // ---- NEW: immediately continue to address step (or confirm if already present)
+    const user = await db.user.findUnique({ where: { tgId: id } });
+
+    // Guard: if somehow user is missing, restart flow safely
+    if (!user) {
+      setState(id, { step: 'need_city', draft: {} });
+      return askCity(ctx);
+    }
+
+    const needsCity = !user.city;
+    const needsPlace = !user.place;
+    const needsRef = !user.specialReference;
+
+    if (needsCity || needsPlace || needsRef) {
+      const nextStep: Step = needsCity ? 'need_city' : needsPlace ? 'need_place' : 'need_ref';
+      setState(id, { step: nextStep, draft: {} });
+
+      if (nextStep === 'need_city') return askCity(ctx);
+      if (nextStep === 'need_place') return askPlace(ctx);
+      return askRef(ctx);
+    }
+
+    // All address parts already exist → confirm/edit
+    setState(id, { step: 'confirm_address', draft: {} });
+    return showConfirm(ctx, user);
   });
 
-  // Capture address reply → place order
-  bot.on('message', async (ctx: any) => {
-    const tgId = String(ctx.from.id);
-    // Only handle replies when we are waiting for an address
-    if (!awaitingAddress.has(tgId)) return;
-    if (!ctx.message?.reply_to_message) return;
 
-    awaitingAddress.delete(tgId);
-    const shippingAddress = String(ctx.message.text || '').trim().slice(0, 500) || null;
+  // ADDRESS text capture (city → place → ref)
+  bot.on('text', async (ctx: any, next: any) => {
+    const id = tgIdOf(ctx);
+    const st = getState(id);
+    if (!st) return next();
 
+    const text = String(ctx.message.text || '').trim();
+    if (!text) return next();
+
+    if (st.step === 'need_city') {
+      st.draft.city = text;
+      st.step = 'need_place';
+      setState(id, st);
+      return askPlace(ctx);
+    }
+
+    if (st.step === 'need_place') {
+      st.draft.place = text;
+      st.step = 'need_ref';
+      setState(id, st);
+      return askRef(ctx);
+    }
+
+    if (st.step === 'need_ref') {
+      st.draft.ref = text;
+
+      // Persist to User
+      await db.user.update({
+        where: { tgId: id },
+        data: {
+          city: st.draft.city,
+          place: st.draft.place,
+          specialReference: st.draft.ref,
+        },
+      });
+
+      st.step = 'confirm_address';
+      setState(id, st);
+
+      const user = await db.user.findUnique({ where: { tgId: id } });
+      return ctx.reply(
+        `📦 Address saved:\n*${formatAddress(user!)}*`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Use this address', 'CHK_USE_ADDR')],
+            [Markup.button.callback('✏️ Edit address', 'CHK_EDIT_ADDR')],
+          ])
+        }
+      );
+    }
+
+    return next();
+  });
+
+  // Confirm / Edit buttons
+  bot.action('CHK_USE_ADDR', async (ctx: any) => {
+    await ctx.answerCbQuery();
+    const id = tgIdOf(ctx);
+    const user = await db.user.findUnique({ where: { tgId: id } });
+    if (!user) return ctx.reply('Please /start first.');
+
+    const shippingAddress = formatAddress(user);
     try {
-      const order = await OrdersService.checkoutFromCartWithDetails(tgId, { shippingAddress });
-      const freshUser = await db.user.findUnique({ where: { tgId } });
+      const order = await OrdersService.checkoutFromCartWithDetails(id, { shippingAddress });
+      clearState(id);
 
-      await ctx.reply(
+      await ctx.editMessageText(
         `✅ Order placed!\n` +
         `#${order.id.slice(0,6)}\n` +
         `Total: ${money(order.total, order.currency)}\n` +
         `Status: ${order.status}\n` +
-        `Phone: ${freshUser?.phone || '—'}\n` +
-        `Address: ${shippingAddress || '—'}`
+        `Phone: ${user.phone || '—'}\n` +
+        `Address:\n${shippingAddress}`,
+        { parse_mode: 'Markdown' }
       );
 
-      // Notify admins (best-effort)
-      for (const id of adminIds) {
+      // Admin notifications (best-effort)
+      for (const admin of adminIds) {
         try {
           await ctx.telegram.sendMessage(
-            id,
-            `🆕 Order #${order.id.slice(0,6)} from tg:${tgId}\nTotal: ${money(order.total, order.currency)}\nStatus: ${order.status}`
+            admin,
+            `🆕 Order #${order.id.slice(0,6)} from tg:${id}\nTotal: ${money(order.total, order.currency)}\nStatus: ${order.status}`
           );
         } catch {}
       }
     } catch (e: any) {
-      await ctx.reply(`❌ Checkout failed: ${e.message || 'unknown error'}`);
+      await ctx.answerCbQuery(`❌ ${e.message || 'Failed'}`, { show_alert: true });
     }
+  });
+
+  bot.action('CHK_EDIT_ADDR', async (ctx: any) => {
+    await ctx.answerCbQuery();
+    const id = tgIdOf(ctx);
+    setState(id, { step: 'need_city', draft: {} });
+    return ctx.editMessageText('✏️ Let’s update your address.\nWhat *city*?', { parse_mode: 'Markdown' });
   });
 }

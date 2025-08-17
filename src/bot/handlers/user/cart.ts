@@ -66,20 +66,20 @@ export const registerCartHandlers = (bot: any) => {
 };
 
 // Minimal checkout (no phone/address in this pass)
-export const registerCheckoutHandler = (bot: any) => {
-  bot.action('CHECKOUT', async (ctx: any) => {
-    await ctx.answerCbQuery();
-    const userId = String(ctx.from.id);
-    try {
-      const order = await OrdersService.checkoutFromCartWithDetails(userId);
-      await ctx.reply(
-        `✅ Order placed!\n` +
-        `#${order.id.slice(0,6)}\n` +
-        `Total: ${money(order.total, order.currency)}\n` +
-        `Status: ${order.status}\n(See “📜 My Orders”.)`
-      );
-    } catch (e: any) {
-      await ctx.reply(`❌ Checkout failed: ${e.message || 'unknown error'}`);
-    }
-  });
-};
+// export const registerCheckoutHandler = (bot: any) => {
+//   bot.action('CHECKOUT', async (ctx: any) => {
+//     await ctx.answerCbQuery();
+//     const userId = String(ctx.from.id);
+//     try {
+//       const order = await OrdersService.checkoutFromCartWithDetails(userId);
+//       await ctx.reply(
+//         `✅ Order placed!\n` +
+//         `#${order.id.slice(0,6)}\n` +
+//         `Total: ${money(order.total, order.currency)}\n` +
+//         `Status: ${order.status}\n(See “📜 My Orders”.)`
+//       );
+//     } catch (e: any) {
+//       await ctx.reply(`❌ Checkout failed: ${e.message || 'unknown error'}`);
+//     }
+//   });
+// };

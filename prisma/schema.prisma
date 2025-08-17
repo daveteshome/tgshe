@@ -18,6 +18,11 @@ model User {
   username  String?
   name      String?
   phone     String?
+
+  city              String?
+  place             String?     // neighborhood / area
+  specialReference  String?     // landmark / directions
+
   createdAt DateTime @default(now())
   orders    Order[]
   cart      Cart?

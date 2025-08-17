@@ -10,7 +10,7 @@ import { registerAdminOrders } from './bot/handlers/admin/orders';
 import { registerAdminProducts } from './bot/handlers/admin/products';
 import { registerProfileHandlers } from './bot/handlers/user/profile';
 import { registerCheckoutFlow } from './bot/handlers/user/checkout';
-import { registerCartHandlers, registerCheckoutHandler } from './bot/handlers/user/cart';
+import { registerCartHandlers } from './bot/handlers/user/cart';
 
 
 
@@ -24,13 +24,12 @@ export function createApp() {
   
   registerProfileHandlers(bot);
  
-  registerCheckoutHandler(bot);
   registerBuyNow(bot);
 
 
   registerViewProducts(bot);
   registerCartHandlers(bot);
-  registerCheckoutFlow(bot, ENV.ADMIN_IDS);  // <-- BEFORE admin handlers
+  registerCheckoutFlow(bot, ENV.ADMIN_IDS); 
   registerMyOrders(bot);
 
   registerAdminOrders(bot);
