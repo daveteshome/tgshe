@@ -1,0 +1,73 @@
+apps/
+└─ webapp/
+   ├─ public/
+   │   └─ favicon.svg
+   ├─ src/
+   │  ├─ assets/
+   │  │   └─ react.svg
+   │  ├─ components/
+   │  │  ├─ layout/
+   │  │  │   ├─ TopBar.tsx            # page title + optional actions
+   │  │  │   ├─ NavBar.tsx            # bottom tabs: Shop | Cart | Orders | Profile (+ Admin if admin)
+   │  │  │   └─ StatusBar.tsx         # slim status/notice bar (optional)
+   │  │  ├─ common/
+   │  │  │   ├─ Loader.tsx            # spinner/skeleton
+   │  │  │   ├─ ErrorView.tsx         # friendly error box
+   │  │  │   ├─ EmptyState.tsx        # “nothing here yet” placeholder
+   │  │  │   ├─ Pagination.tsx        # prev/next + page indicator
+   │  │  │   ├─ QuantityStepper.tsx   # − qty + control
+   │  │  │   ├─ Badge.tsx             # small status label (pending/paid/etc.)
+   │  │  │   └─ FormField.tsx         # label + input/textarea wrapper
+   │  │  ├─ product/
+   │  │  │   ├─ ProductCard.tsx       # image, title, price, stock, Add to cart
+   │  │  │   ├─ ProductGrid.tsx       # responsive grid of ProductCard
+   │  │  │   └─ CategoryTabs.tsx      # scrollable category pills (active state)
+   │  │  ├─ cart/
+   │  │  │   ├─ CartItemRow.tsx       # title, price, QuantityStepper, remove
+   │  │  │   └─ CartSummary.tsx       # total + checkout CTA
+   │  │  ├─ orders/
+   │  │  │   ├─ OrderListItem.tsx     # #id, date, total, status
+   │  │  │   └─ OrderSummary.tsx      # items + totals used on detail page
+   │  │  └─ profile/
+   │  │      └─ AddressForm.tsx       # city, place, specialReference (reused in cart/profile)
+   │  │
+   │  ├─ routes/
+   │  │  ├─ Home.tsx                  # Shop landing: CategoryTabs + ProductGrid (+ Pagination)
+   │  │  ├─ Products.tsx              # (optional) products for a specific category via ?category=
+   │  │  ├─ Categories.tsx            # category list (if you want a separate view)
+   │  │  ├─ Cart.tsx                  # cart list using CartItemRow + CartSummary + AddressForm
+   │  │  ├─ Profile.tsx               # shows user info + AddressForm (save to /api/profile)
+   │  │  ├─ Orders.tsx                # list of orders using OrderListItem
+   │  │  └─ OrderDetail.tsx           # single order view using OrderSummary
+   │  │  # (later) Admin/
+   │  │  #   ├─ Products.tsx          # admin products table
+   │  │  #   └─ ProductForm.tsx       # create/edit product
+   │  │
+   │  ├─ lib/
+   │  │  ├─ api/
+   │  │  │   ├─ catalog.ts            # GET /categories, GET /products?category=&page=&perPage=
+   │  │  │   ├─ cart.ts               # GET /cart, POST /cart/items, PATCH/DELETE /cart/items/:id
+   │  │  │   ├─ orders.ts             # GET /orders, GET /orders/:id, POST /checkout
+   │  │  │   ├─ profile.ts            # GET/PUT /profile
+   │  │  │   └─ index.ts              # re-export + api base (adds X-Telegram-Init-Data header)
+   │  │  ├─ hooks/
+   │  │  │   ├─ useAsync.ts           # loading/data/error helper
+   │  │  │   └─ useQueryParam.ts      # read/write ?page, ?category, etc.
+   │  │  ├─ types.ts                  # Category, Product, Cart, Order, Profile interfaces
+   │  │  ├─ format.ts                 # money/date helpers (Intl wrappers)
+   │  │  ├─ store.ts                  # lightweight global state (cart badge count, user hint)
+   │  │  ├─ telegram.ts               # WebApp init + theme + initData extraction
+   │  │  └─ constants.ts              # perPage defaults, route paths, etc.
+   │  │
+   │  ├─ App.tsx                      # route switcher + TopBar/NavBar glue
+   │  ├─ main.tsx                     # React entry (Vite)
+   │  ├─ index.css                    # global reset + Telegram theme variables
+   │  └─ App.css                      # component-level styles (if needed)
+   │
+   ├─ .env.example                    # FRONTEND_API_BASE, etc. (if you proxy, may be empty)
+   ├─ index.html
+   ├─ package.json
+   ├─ tsconfig.app.json
+   ├─ tsconfig.json
+   ├─ tsconfig.node.json
+   └─ vite.config.ts
