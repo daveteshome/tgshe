@@ -1,7 +1,8 @@
 // apps/webapp/src/lib/api/index.ts
 import { getInitDataRaw } from "../telegram";
 
-const API_BASE = "/api";
+// apps/webapp/src/lib/api/index.ts
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers as HeadersInit);

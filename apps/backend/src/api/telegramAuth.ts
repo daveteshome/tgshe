@@ -8,33 +8,53 @@ function readInitDataRaw(req: Request): string | null {
   const auth = req.headers["authorization"];
   if (typeof auth === "string") {
     const m = auth.match(/^tma\s+(.+)$/i);
-    if (m) return m[1]; // exact raw
+    if (m) return m[1];
   }
   return null;
 }
 
-function safeDecode(raw: string): string {
-  try { return decodeURIComponent(raw); } catch { return raw; }
-}
+function validateTelegramWebAppData(initData: string): boolean {
+  try {
+    // Parse the initData string without decoding
+    const params = new URLSearchParams(initData);
+    const receivedHash = params.get('hash');
+    
+    if (!receivedHash) {
+      return false;
+    }
 
-function buildCheckString(decoded: string): string {
-  const params = new URLSearchParams(decoded);
-  const pairs: string[] = [];
-  params.forEach((v, k) => {
-    if (k === "hash" || k === "signature") return;
-    pairs.push(`${k}=${v}`);
-  });
-  pairs.sort();
-  return pairs.join("\n");
-}
-
-/** Mini Apps HMAC:
- * secret = HMAC_SHA256(key="WebAppData", message=BOT_TOKEN)  (key is the literal string "WebAppData")
- * expected = HMAC_SHA256(key=secret, message=checkString)
- */
-function computeMiniAppsHash(checkString: string, botToken: string): string {
-  const secret = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
-  return crypto.createHmac("sha256", secret).update(checkString).digest("hex");
+    // Remove the hash parameter only (not signature)
+    params.delete('hash');
+    
+    // Collect all key-value pairs
+    const dataCheckEntries: [string, string][] = [];
+    params.forEach((value, key) => {
+      dataCheckEntries.push([key, value]);
+    });
+    
+    // Sort alphabetically by key
+    dataCheckEntries.sort(([a], [b]) => a.localeCompare(b));
+    
+    // Build the data check string
+    const dataCheckString = dataCheckEntries
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n');
+    
+    // Calculate the secret key
+    const secretKey = crypto.createHmac('sha256', 'WebAppData')
+      .update(ENV.BOT_TOKEN)
+      .digest();
+    
+    // Calculate the expected hash
+    const expectedHash = crypto.createHmac('sha256', secretKey)
+      .update(dataCheckString)
+      .digest('hex');
+    
+    return expectedHash === receivedHash;
+  } catch (error) {
+    console.error('Telegram validation error:', error);
+    return false;
+  }
 }
 
 export async function telegramAuth(req: any, res: Response, next: NextFunction) {
@@ -42,28 +62,30 @@ export async function telegramAuth(req: any, res: Response, next: NextFunction) 
     const raw = readInitDataRaw(req);
     if (!raw) return res.status(401).json({ error: "unauthorized", detail: "initData missing" });
 
-    const decoded = safeDecode(raw);
-    const params = new URLSearchParams(decoded);
-    const provided = params.get("hash");
-    if (!provided) return res.status(401).json({ error: "unauthorized", detail: "hash missing" });
-
-    // Optional freshness:
-    // const authDate = Number(params.get("auth_date") || "0");
-    // if (!authDate || Date.now()/1000 - authDate > 7*24*3600) return res.status(401).json({ error: "unauthorized", detail: "initData too old" });
-
-    const checkString = buildCheckString(decoded);
-    const expected = computeMiniAppsHash(checkString, ENV.BOT_TOKEN);
-
-    if (expected !== provided) {
-      return res.status(401).json({ error: "unauthorized", detail: "invalid hash" });
+    // Validate the initData
+    if (!validateTelegramWebAppData(raw)) {
+      // Add debug information to help troubleshooting
+      const debugInfo = debugValidation(raw);
+      return res.status(401).json({ 
+        error: "unauthorized", 
+        detail: "invalid hash",
+        debug: debugInfo
+      });
     }
 
+    // Parse user data
+    const params = new URLSearchParams(raw);
     const userRaw = params.get("user");
-    const user = userRaw ? JSON.parse(userRaw) : null;
-    if (!user?.id) return res.status(401).json({ error: "unauthorized", detail: "no user in initData" });
+    
+    if (!userRaw) return res.status(401).json({ error: "unauthorized", detail: "no user in initData" });
+
+    const user = JSON.parse(decodeURIComponent(userRaw));
+    
+    if (!user?.id) return res.status(401).json({ error: "unauthorized", detail: "no user id in initData" });
 
     req.userId = String(user.id);
 
+    // Upsert user in database
     await db.user.upsert({
       where: { tgId: req.userId },
       update: {
@@ -79,6 +101,45 @@ export async function telegramAuth(req: any, res: Response, next: NextFunction) 
 
     next();
   } catch (e: any) {
+    console.error('Auth error:', e);
     return res.status(401).json({ error: "unauthorized", detail: e?.message || "verify failed" });
   }
 }
+
+// Debug function to help troubleshoot
+function debugValidation(initData: string): any {
+  const params = new URLSearchParams(initData);
+  const receivedHash = params.get('hash');
+  
+  params.delete('hash');
+  
+  const dataCheckEntries: [string, string][] = [];
+  params.forEach((value, key) => {
+    dataCheckEntries.push([key, value]);
+  });
+  
+  dataCheckEntries.sort(([a], [b]) => a.localeCompare(b));
+  
+  const dataCheckString = dataCheckEntries
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  
+  const secretKey = crypto.createHmac('sha256', 'WebAppData')
+    .update(ENV.BOT_TOKEN)
+    .digest();
+  
+  const expectedHash = crypto.createHmac('sha256', secretKey)
+    .update(dataCheckString)
+    .digest('hex');
+  
+  return {
+    receivedHash,
+    expectedHash,
+    dataCheckString,
+    keys: dataCheckEntries.map(([key]) => key),
+    receivedHashTail: receivedHash ? receivedHash.slice(-12) : null,
+    expectedHashTail: expectedHash.slice(-12),
+    match: receivedHash === expectedHash
+  };
+}
+

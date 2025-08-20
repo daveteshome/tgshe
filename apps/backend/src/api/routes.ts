@@ -103,4 +103,103 @@ api.post('/cart/items', async (req: any, res) => {
   res.json(cart);
 });
 
-// ... keep your other routes (orders/profile/etc) the same
+api.patch('/cart/items/:id', async (req: any, res) => {
+  const itemId = String(req.params.id);
+  const { qtyDelta } = req.body || {};
+  if (!qtyDelta || !Number.isInteger(qtyDelta)) return res.status(400).json({ error: 'qtyDelta required (int)' });
+
+  if (qtyDelta > 0) {
+    await CartService.inc(itemId);
+  } else {
+    // apply |qtyDelta| times dec() — simple & safe
+    for (let i = 0; i < Math.abs(qtyDelta); i++) await CartService.dec(itemId);
+  }
+  res.json({ ok: true });
+});
+
+api.delete('/cart/items/:id', async (req: any, res) => {
+  const userId = req.userId!;
+  const itemId = String(req.params.id);
+
+  // Ensure item belongs to the user's cart before deleting
+  const item = await db.cartItem.findFirst({
+    where: { id: itemId, cart: { userId } },
+    select: { id: true },
+  });
+
+  if (!item) return res.status(404).json({ error: 'not found' });
+
+  await db.cartItem.delete({ where: { id: itemId } });
+  res.json({ ok: true });
+});
+
+
+// ---------- Checkout / Buy Now ----------
+api.post('/checkout', async (req: any, res) => {
+  const userId = req.userId!;
+  const { shippingAddress, note } = req.body || {};
+  try {
+    const order = await OrdersService.checkoutFromCartWithDetails(userId, { shippingAddress, note });
+    res.json(order);
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message || 'checkout failed' });
+  }
+});
+
+// Single-item flow but same validations live in OrdersService
+api.post('/buy-now', async (req: any, res) => {
+  const userId = req.userId!;
+  const { productId, shippingAddress, note } = req.body || {};
+  if (!productId) return res.status(400).json({ error: 'productId required' });
+  const p = await db.product.findUnique({ where: { id: String(productId) } });
+  if (!p || !p.isActive) return res.status(400).json({ error: 'product unavailable' });
+  try {
+    const order = await OrdersService.createSingleItemPending(userId, { id: p.id, title: p.title, price: p.price, currency: p.currency }, { shippingAddress, note });
+    res.json(order);
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message || 'buy-now failed' });
+  }
+});
+
+// ---------- Orders ----------
+api.get('/orders', async (req: any, res) => {
+  const userId = req.userId!;
+  const take = int(req.query.take, 20);
+  const orders = await OrdersService.listUserOrders(userId, take);
+  res.json(orders);
+});
+
+api.get('/orders/:id', async (req: any, res) => {
+  const userId = req.userId!;
+  const id = String(req.params.id);
+  const order = await db.order.findUnique({ where: { id, userId }, include: { items: true } });
+  if (!order) return res.status(404).json({ error: 'not found' });
+  res.json(order);
+});
+
+// ---------- Profile ----------
+api.get('/profile', async (req: any, res) => {
+  const userId = req.userId!;
+  const u = await db.user.findUnique({ where: { tgId: userId } });
+  res.json({
+    tgId: userId,
+    username: u?.username ?? null,
+    name: u?.name ?? null,
+    phone: u?.phone ?? null,
+    city: u?.city ?? null,
+    place: u?.place ?? null,
+    specialReference: u?.specialReference ?? null,
+  });
+});
+
+api.put('/profile', async (req: any, res) => {
+  const userId = req.userId!;
+  const { phone, city, place, specialReference } = req.body || {};
+  const u = await db.user.upsert({
+    where: { tgId: userId },
+    update: { phone, city, place, specialReference },
+    create: { tgId: userId, phone, city, place, specialReference },
+  });
+  res.json(u);
+});
+

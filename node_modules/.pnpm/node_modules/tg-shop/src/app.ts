@@ -31,22 +31,32 @@ export function createApp() {
 
   // Strict CORS (only your WebApp origin)
   app.use(cors({
-    origin: ENV.WEBAPP_URL || false, // false => block if not set; set to true for dev-all
-    methods: ['GET','POST','PATCH','DELETE','OPTIONS'],
+    origin: [
+      ENV.WEBAPP_URL,
+      'https://web.telegram.org',
+      /\.ngrok-free\.app$/, // Allow all ngrok subdomains
+      'http://localhost:3000' // For local development
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   }));
 
   // Body limits (prevent abuse)
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '10mb' })); // Increased limit for potential image uploads
   app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 
   // Rate limit API (uses userId if available, else IPv6-safe IP key)
   const apiLimiter = rateLimit({
     windowMs: 60_000, // 1 minute
-    limit: 60,
+    max: 100, // Increased limit for API calls
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     // Use Telegram userId when present; otherwise IPv6-safe IP key
     keyGenerator: (req: any) => (req.userId ?? ipKeyGenerator(req.ip)),
+    message: {
+      error: 'Too many requests, please try again later.'
+    }
   });
 
   // Mount API with limiter
@@ -68,17 +78,44 @@ export function createApp() {
   const WEBHOOK_PATH = '/tg/webhook';
   app.use(bot.webhookCallback(WEBHOOK_PATH));
 
-  // Health
-  app.get('/', (_req, res) => res.send('OK'));
+  // Health endpoint with more details
+  app.get('/', (_req, res) => {
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      environment: ENV.NODE_ENV,
+      webappUrl: ENV.WEBAPP_URL
+    });
+  });
+
+  // Error handling middleware
+  app.use((err: any, req: Request, res: express.Response, next: express.NextFunction) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      ...(ENV.NODE_ENV === 'development' && { details: err.message })
+    });
+  });
+
+  // 404 handler
+  app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+  });
 
   return {
     app,
     start: async () => {
       app.listen(ENV.PORT, async () => {
-        console.log(`Server on :${ENV.PORT}`);
+        console.log(`Server running on port ${ENV.PORT}`);
+        console.log(`Environment: ${ENV.NODE_ENV}`);
+        console.log(`WebApp URL: ${ENV.WEBAPP_URL}`);
+        
         try {
           await bot.telegram.setWebhook(`${ENV.BASE_URL}${WEBHOOK_PATH}`);
           console.log('Webhook set to', `${ENV.BASE_URL}${WEBHOOK_PATH}`);
+          
+          const botInfo = await bot.telegram.getMe();
+          console.log(`Bot @${botInfo.username} is ready`);
         } catch (e) {
           console.error('Webhook error:', e);
         }

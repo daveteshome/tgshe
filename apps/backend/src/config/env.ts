@@ -13,5 +13,7 @@ export const ENV = {
   PORT: parseInt(process.env.PORT || '4000', 10),
   ADMIN_IDS: (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean),
   GROUP_CHAT_ID: (process.env.GROUP_CHAT_ID || ''),
-  ADMIN_GROUP_CHAT_ID: (process.env.ADMIN_GROUP_CHAT_ID || ''), 
+  ADMIN_GROUP_CHAT_ID: (process.env.ADMIN_GROUP_CHAT_ID || ''),
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  DATABASE_URL: required('DATABASE_URL'),
 };

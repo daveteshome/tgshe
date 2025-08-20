@@ -23,7 +23,12 @@ export function getInitDataRaw(): string | null {
     // @ts-ignore
     const tgRaw: unknown = (window as any).Telegram?.WebApp?.initData;
     if (typeof tgRaw === 'string' && tgRaw.length > 0) {
-      setCache(tgRaw);
+      // Clean up the initData - remove signature if both hash and signature exist
+      let cleaned = tgRaw;
+      if (tgRaw.includes('hash=') && tgRaw.includes('signature=')) {
+        cleaned = tgRaw.replace(/&signature=[^&]*/, '');
+      }
+      setCache(cleaned);
       return _cachedRaw;
     }
   } catch {}

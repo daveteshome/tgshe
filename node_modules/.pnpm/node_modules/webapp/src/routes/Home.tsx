@@ -15,6 +15,7 @@ import { refreshCartCount } from "../lib/store";
 import DebugPanel from "../components/common/DebugPanel";
 import RunInsideTelegramNotice from "../components/common/RunInsideTelegramNotice";
 import { ready, getInitData } from "../lib/telegram";
+import DebugAuth from '../components/common/DebugAuth';
 
 export default function Home() {
   
@@ -58,6 +59,7 @@ export default function Home() {
 
   return (
     <div>
+      <DebugAuth />
       <DebugPanel />
       <RunInsideTelegramNotice show={outside} />
 

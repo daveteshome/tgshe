@@ -71,3 +71,46 @@ apps/
    ├─ tsconfig.json
    ├─ tsconfig.node.json
    └─ vite.config.ts
+
+
+
+# --- Write a clean v3 config to the path you want ---
+$cfg = @"
+version: 3
+agent:
+  authtoken: 31Se6p0GGBw7fuNqBdHVfrUvHzD_4bWdUQBXhiqeokL3d8WvV
+
+tunnels:
+  backend:
+    proto: http
+    addr: 4000
+  webapp:
+    proto: http
+    addr: 5173
+"@
+
+$cfg | Set-Content -Encoding UTF8 'C:\Users\davet\AppData\Local\ngrok\ngrok.yml'
+
+# --- Force this process to use your file and a valid update channel ---
+$env:NGROK_CONFIG = 'C:\Users\davet\AppData\Local\ngrok\ngrok.yml'
+$env:NGROK_UPDATE_CHANNEL = 'stable'
+
+# --- Sanity check the file content we’ll use ---
+Get-Content -Raw $env:NGROK_CONFIG
+
+# --- Validate and start (explicit --config just to be extra safe) ---
+ngrok config check --config $env:NGROK_CONFIG
+
+ngrok start backend webapp --config $env:NGROK_CONFIG
+
+
+pnpm dev          # run with ts-node + nodemon
+pnpm db:studio    # GUI to inspect DB
+ngrok http 4000
+
+
+npx prisma migrate dev -n add_photo_to_product_fields
+pnpm prisma db push 
+pnpm prisma generate
+
+ pnpm run dev
