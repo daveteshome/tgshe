@@ -114,3 +114,401 @@ pnpm prisma db push
 pnpm prisma generate
 
  pnpm run dev
+
+
+
+ auth/security and UI/functional features).
+
+
+
+ P0 — Core Shopper Flow (finish & polish)
+
+Goal: Smooth “browse → learn → add → checkout → confirm” with zero dead ends.
+
+Product Detail Page
+
+Deliverables: /product/:id route; gallery (zoomable image), title, price, stock, full description, “Add to cart”, “Buy now”, sticky mini-cart summary.
+
+Accepts: From grid, deep-link, and back button.
+
+AC:
+
+Image loads with fallback; price & currency shown.
+
+“Buy now” creates a single-item pending order and jumps to confirmation.
+
+“Add to cart” updates badge immediately (optimistic), reconciles on success/fail.
+
+Catalog Search & Sort
+
+Deliverables: Search input (debounced), sort dropdown (Newest | Price ↑ | Price ↓).
+
+AC:
+
+Typing updates results within 300–500 ms.
+
+Sort persists when paging and when navigating back from PDP.
+
+Notes: Persist last query/sort/category in sessionStorage.
+
+Checkout UX
+
+Deliverables: Checkout form step with inline validation; confirmation screen.
+
+AC:
+
+Required: phone, address line(s), city, note/specialReference (optional).
+
+“Place order” leads to Order Confirmation: order ID, items, totals, “Track order” CTA → order details page.
+
+Prevent double-submit (disable button while in-flight).
+
+Notes: If you already store phone/address in Profile, prefill & let users edit.
+
+Error/Empty States & Loaders
+
+Deliverables: Skeletons for product cards, PDP, orders; empty states for catalog/cart/orders; toasts for success/error.
+
+AC:
+
+No blank screens during load or error.
+
+“Retry” button appears on API failure.
+
+401 Auto-Reauth
+
+Deliverables: API layer that intercepts 401 → silently re-run TMA login (or prompt to re-open in Telegram if initData missing).
+
+AC:
+
+Shopper never gets stuck due to expired session; minimal friction in TG webview.
+
+P1 — Usability & Mobile Excellence
+
+Goal: It feels native inside Telegram (desktop & mobile).
+
+Back Button & Navigation
+
+Deliverables: Sync Telegram’s back button with router; handle close behavior.
+
+AC:
+
+In PDP, back returns to prior grid position.
+
+In root tabs, back either switches tabs correctly or closes mini app when appropriate.
+
+Haptics & Toasts
+
+Deliverables: Use Telegram.WebApp.HapticFeedback for “add to cart”, “success”, “error”.
+
+AC:
+
+Subtle haptic bump on add; success vibration on order placed.
+
+Safe-Area & Responsive Layout
+
+Deliverables: Respect notches and bottom bars; ensure bottom nav isn’t obscured.
+
+AC:
+
+iOS/Android safe areas handled; no clipped CTA buttons.
+
+Accessibility & Keyboard
+
+Deliverables: Focus states, large touch targets, numeric keyboards for numbers, dismiss keyboard on scroll.
+
+AC:
+
+Forms usable one-handed on mobile; no hidden inputs under keyboard.
+
+P2 — Addresses, Favorites, Coupons (Commerce Enhancers)
+
+Goal: Repeat shoppers move faster; AOV uplift.
+
+Saved Addresses
+
+Deliverables: Profile → Address Book CRUD; pick on checkout.
+
+AC:
+
+Default address auto-selected; can add/edit/delete; checkout reflects selection.
+
+Favorites / Wishlist
+
+Deliverables: Heart icon on product card/PDP; “Favorites” filter/tab.
+
+AC:
+
+Toggles optimistically; persists across sessions.
+
+Coupons / Promo Codes
+
+Deliverables: Input at checkout; apply/remove; display savings & new total.
+
+AC:
+
+Invalid codes give clear errors; idempotent server-side calculation.
+
+P3 — Payments & Fulfillment Visibility
+
+Goal: Real payment and visible order journey.
+
+Payment Path
+Pick one now and stub UI accordingly:
+
+Telegram Stars (digital) or
+
+PSP (e.g., Stripe / local provider) for physical goods (hosted checkout / openInvoice).
+
+AC:
+
+Pay button shows correct flow; failure/success returns to confirmation & updates order status.
+
+Order Status & Tracking
+
+Deliverables: Order timeline (Pending → Processing → Shipped → Delivered) + optional tracking link.
+
+AC:
+
+Status labels & timestamps shown in Order Detail; “Track package” opens external link if present.
+
+Bot Notifications
+
+Deliverables: On order placed and on status change, send Telegram message.
+
+AC:
+
+Shopper receives timely push via bot with deep links back into mini app.
+
+P4 — Admin-lite (Optional if already using bot admin)
+
+Goal: Minimal web admin to reduce friction.
+
+Products list with edit price/stock, upload images.
+
+Orders table (filter by status/date), update status with note.
+
+Basic analytics: views, add-to-cart, checkout started/completed.
+
+P5 — Performance & Quality
+
+Goal: Fast, stable, observable.
+
+Perf: Code splitting per route; image optimization (srcset, lazy load), cache lists; debounce search.
+
+Quality: Central error boundary; API retry policy; Sentry/LogRocket (or similar).
+
+i18n: Extract strings for future locales.
+
+Telemetry: Track events (view_product, add_to_cart, start_checkout, purchase).
+
+Component & Route Map (frontend)
+
+/ (Shop): CategoryTabs, SearchBar, SortMenu, ProductGrid, CartBadge
+
+/product/:id: ProductGallery, PriceBlock, StockBadge, AddToCart, BuyNow, StickyMiniCart
+
+/cart: CartLines, QtyStepper, SummaryCard, CheckoutCTA
+
+/checkout: AddressForm (prefilled), PhoneForm, CouponBox, PlaceOrder
+
+/orders: OrdersList (status chips, date range filter)
+
+/orders/:orderId: OrderSummary, Timeline, TrackingLink
+
+/profile: ProfileForm, AddressBook (CRUD), Preferences
+
+API & State (thin guide)
+
+API layer: api.ts with fetchJson that handles: base URL, credentials: 'include', 401 intercept + TMA reauth, retries (idempotent only).
+
+Caching: Keep catalog lists in memory per category+query+sort; invalidate on product changes.
+
+Optimistic updates: Add/remove cart, favorite toggles; reconcile from server.
+
+Acceptance Test Checklist (P0)
+
+ Open app from Desktop & Mobile TG; theme matches Telegram.
+
+ Browse categories; switch tabs preserves scroll & page.
+
+ Search + sort work together; back restores inputs and grid position.
+
+ PDP shows correct price/currency, stock; “Add” and “Buy now” both work.
+
+ Cart qty stepper is instant; totals correct; remove line works.
+
+ Checkout validates required fields; prevents double-submit; shows confirmation.
+
+ 401 triggers silent reauth; no dead-end states.
+
+ Error screens have Retry; toasts appear for success/error.
+
+ Works offline-tolerant enough to show helpful messages (no white screens).
+
+“Do Next” — Week-by-week plan
+
+Week 1 (P0 focus)
+
+PDP route + components
+
+Search + sort + persistence
+
+Loaders/empty/error + toasts
+
+401 auto-reauth in api.ts
+
+Week 2 (P0 finish + P1 polish)
+
+Checkout form + confirmation screen
+
+Back button integration (TG + browser)
+
+Haptics & safe-area polish
+
+QA pass against acceptance list
+
+Week 3 (P2 foundations)
+
+Address book (Profile + Checkout pick)
+
+Favorites MVP
+
+Coupon UI + server validation hooks
+
+Week 4 (P3 decision & scaffolding)
+
+Choose payment path; stub Pay button flows
+
+Order timeline + tracking link
+
+Bot notifications for order events
+
+Small, high-impact tickets you can pick up today
+
+Persist last category/search/sort with sessionStorage keys cat, q, sort.
+
+Add SkeletonCard and SkeletonList to grid and orders.
+
+Toast utility (useToast) and standard messages.
+
+API 401 interceptor that calls a reauth() helper which re-runs initData check.
+
+Sticky mini-cart on PDP (position: sticky; bottom bar in safe area).
+
+If you want, I can draft the minimal code scaffolding for:
+
+/product/:id page structure (with a basic gallery and sticky mini-cart), and
+
+A shared api.ts with 401 auto-reauth + toast/error handling.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+..................... Plan .....................
+
+
+Got it. Here’s the concise “what’s needed first” to build a multi‑tenant Telegram store builder (like @sellzbot) — no code.
+
+1) Product scope & roles
+
+Roles: Store Owner (tenant admin), Staff (optional), Shopper (end user), Platform Admin (you).
+
+Value: Owners create a shop, add products, receive orders, view analytics; shoppers browse/buy inside Telegram.
+
+2) Core user journeys (MVP)
+
+Owner onboarding: Start bot → register → create shop (name, slug, currency) → connect payment method → add first product → share link.
+
+Catalog & checkout: Shoppers open mini app → browse/search → add to cart → checkout (contact + address) → order confirmation → notifications.
+
+Order management: Owner views orders → update status (pending, processing, shipped, delivered) → buyer gets updates.
+
+Product management: CRUD products, categories, stock, pricing, images.
+
+Analytics (initial): Sales, orders, top products, conversion basics.
+
+3) Telegram integration
+
+Bot: Commands for onboarding, quick actions, and notifications (order created/status changed).
+
+Mini App: WebApp for storefront, cart, checkout, orders, profile.
+
+Deep links: startapp=<shop_slug> to route shoppers to the right store.
+
+Webhooks: Receive bot updates; send proactive messages.
+
+4) Multi‑tenancy essentials (from day 1)
+
+Tenant resolution: From startapp slug (and optionally header/path).
+
+Data scoping: Every key table carries tenantId. All queries filtered by tenant.
+
+Theming: Per-tenant logo/colors/settings to brand the shop.
+
+Media: Per-tenant storage paths.
+
+5) Payments & fulfillment (choose now)
+
+Payment strategy: Telegram Stars (digital) or external PSP (Stripe/local). Start with Cash on Delivery or Bank transfer if payments aren’t ready.
+
+Shipping: Flat-rate or simple rules initially; address capture in checkout.
+
+Receipts: Bot message + in‑app confirmation.
+
+6) Admin & operations
+
+Owner console: Inside mini app (or bot panels) to manage products, orders, settings.
+
+Platform admin: View tenants, suspend/enable, basic usage metrics.
+
+Support hooks: Link to support bot, FAQ, contact email/phone.
+
+7) Analytics (phase 1)
+
+Per shop: Revenue, orders, AOV, top products, daily/weekly charts.
+
+Funnel basics: Sessions → add to cart → checkout → purchase.
+
+8) Legal & policy
+
+Policies per shop: Terms, Returns, Privacy (owner-supplied templates).
+
+Data protection: PII (address/phone) handling, deletion on request.
+
+Content rules: Prohibited items enforcement at platform level.
+
+9) Non‑functional requirements
+
+Security: HMAC verification of Telegram init data; session cookies; rate limits; input validation.
+
+Reliability: Idempotent checkout; retries; error/empty states.
+
+Performance: Fast loads, image optimization, caching.
+
+Observability: Logs, error tracking, basic audit (who changed price/stock).
+
+10) Go‑to‑market milestones
+
+Single shop MVP (end‑to‑end flow working).
+
+Add tenant scaffolding (slug routing, data scoping, theming).
+
+Owner onboarding flow (self‑serve shop creation).
+
+Payments/fulfillment path (even if manual/COD first).
+
+Analytics v1 and notifications.
+
+Platform admin controls and basic abuse controls.

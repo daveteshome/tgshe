@@ -1,6 +1,6 @@
 // apps/webapp/src/components/common/DebugPanel.tsx
 import React, { useEffect, useState } from "react";
-import { getInitData, getInitDataRaw, isInsideTelegramContainer } from "../../lib/telegram";
+import { getInitData, getInitDataRaw, isInsideTelegramContainer, getTelegramWebApp } from "../../lib/telegram";
 import { api } from "../../lib/api/index";
 
 type DebugInfo = {
@@ -28,6 +28,42 @@ function trunc(s: string, n = 120) {
 }
 
 export default function DebugPanel() {
+  const [debugInfo, setDebugInfo] = useState<any>({});
+  const [apiResult, setApiResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Debug information for Telegram environment
+    const tg = getTelegramWebApp();
+    const info = {
+      hasWebApp: !!tg,
+      initData: tg?.initData || 'None',
+      initDataLength: tg?.initData?.length || 0,
+      platform: tg?.platform || 'Not available',
+      version: tg?.version || 'Not available',
+      urlParams: window.location.search,
+      hashParams: window.location.hash,
+      userAgent: navigator.userAgent,
+      isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent),
+      getInitDataRawResult: getInitDataRaw()
+    };
+    
+    setDebugInfo(info);
+    console.log('Telegram environment:', info);
+  }, []);
+
+  const testApi = async (endpoint: string) => {
+    setLoading(true);
+    try {
+      const result = await api(endpoint);
+      setApiResult({ endpoint, success: true, data: result });
+    } catch (error: any) {
+      setApiResult({ endpoint, success: false, error: error.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const [open, setOpen] = useState(true);
   const [inside, setInside] = useState(false);
   const [dec, setDec] = useState(""); const [decLen, setDecLen] = useState(0);

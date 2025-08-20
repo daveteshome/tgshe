@@ -27,13 +27,17 @@ export function createApp() {
   app.set('trust proxy', 1);
 
   // Security headers
-  app.use(helmet());
+  //app.use(helmet());
 
   // Strict CORS (only your WebApp origin)
   app.use(cors({
     origin: [
       ENV.WEBAPP_URL,
+      'https://210ea63e9193.ngrok-free.app',
       'https://web.telegram.org',
+      'https://oauth.telegram.org',
+      /\.t\.me$/,
+      /\.telegram\.org$/,
       /\.ngrok-free\.app$/, // Allow all ngrok subdomains
       'http://localhost:3000' // For local development
     ],

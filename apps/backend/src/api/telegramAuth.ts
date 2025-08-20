@@ -58,13 +58,20 @@ function validateTelegramWebAppData(initData: string): boolean {
 }
 
 export async function telegramAuth(req: any, res: Response, next: NextFunction) {
+  console.log('Telegram auth middleware called');
+  console.log('Request headers:', req.headers);
   try {
     const raw = readInitDataRaw(req);
-    if (!raw) return res.status(401).json({ error: "unauthorized", detail: "initData missing" });
+    
 
+    if (!raw) {
+      console.log('Raw initData from header:', raw);
+      return res.status(401).json({ error: "unauthorized", detail: "initData missing" });
+    }
     // Validate the initData
     if (!validateTelegramWebAppData(raw)) {
       // Add debug information to help troubleshooting
+      console.log('InitData validation failed');
       const debugInfo = debugValidation(raw);
       return res.status(401).json({ 
         error: "unauthorized", 
@@ -72,7 +79,7 @@ export async function telegramAuth(req: any, res: Response, next: NextFunction) 
         debug: debugInfo
       });
     }
-
+    console.log('InitData validation successful');
     // Parse user data
     const params = new URLSearchParams(raw);
     const userRaw = params.get("user");
