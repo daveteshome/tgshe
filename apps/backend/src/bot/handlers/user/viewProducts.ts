@@ -56,7 +56,9 @@ export const registerViewProducts = (bot: any) => {
     const cats = await CatalogService.listCategories();
     if (!cats.length) return ctx.reply('No categories yet.');
 
-    const rows = cats.map((c) => [Markup.button.callback(c.name, `CAT_${c.id}_P_1`)]);
+    const rows = cats.map((c: { id: string; name: string }) => [
+      Markup.button.callback(c.name, `CAT_${c.id}_P_1`)
+    ]);
     await ctx.reply('Choose a category:', Markup.inlineKeyboard(rows));
   });
 
@@ -70,7 +72,11 @@ export const registerViewProducts = (bot: any) => {
     const caption =
       `*${p.title}*\n` +
       (p.description ? `${p.description}\n` : '') +
-      `Price: ${money(p.price, p.currency)}\n` +
+      `Price: ${money(
+        // Product.price is Prisma.Decimal now
+        typeof (p as any).price?.toNumber === 'function' ? (p as any).price.toNumber() : Number(p.price),
+        String(p.currency)
+      )}\n` +
       `Stock: ${p.stock}`;
 
     const kb = Markup.inlineKeyboard([
@@ -82,10 +88,13 @@ export const registerViewProducts = (bot: any) => {
     ]);
 
     try {
-      if (p.photoFileId) {
-        await ctx.replyWithPhoto(p.photoFileId, { caption, parse_mode: 'Markdown', reply_markup: kb.reply_markup });
-      } else if (p.photoUrl?.startsWith('http')) {
-        await ctx.replyWithPhoto({ url: p.photoUrl }, { caption, parse_mode: 'Markdown', reply_markup: kb.reply_markup });
+      const firstImg = (p as any).images?.[0]?.url as string | undefined;
+      if (firstImg && firstImg.startsWith('http')) {
+        await ctx.replyWithPhoto({ url: firstImg }, {
+          caption,
+          parse_mode: 'Markdown',
+          reply_markup: kb.reply_markup
+        });
       } else {
         await ctx.reply(caption, { parse_mode: 'Markdown', reply_markup: kb.reply_markup });
       }

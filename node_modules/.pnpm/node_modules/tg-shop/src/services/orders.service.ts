@@ -1,133 +1,137 @@
 import { db } from '../lib/db';
+import { Prisma, OrderStatus } from '@prisma/client';
+import { getTenantId } from './tenant.util';
 
-const FULFILLMENT = new Set(['confirmed', 'shipped', 'delivered']);
-
-const ALLOWED: Record<string, string[]> = {
-  pending:   ['confirmed', 'canceled', 'shipped', 'delivered'],
-  confirmed: ['shipped', 'canceled'],
-  shipped:   ['delivered', 'canceled'],
-  delivered: [],
-  canceled:  [],
+const ALLOWED: Record<OrderStatus, OrderStatus[]> = {
+  pending:   [OrderStatus.paid, OrderStatus.cancelled, OrderStatus.shipped],
+  paid:      [OrderStatus.shipped, OrderStatus.cancelled],
+  shipped:   [OrderStatus.completed, OrderStatus.cancelled],
+  completed: [],
+  cancelled: [],
 };
 
-
 export const OrdersService = {
-  createSingleItemPending(
-  tgId: string,
-  product: { id: string; title: string; price: number; currency: string; },
-  opts: { shippingAddress?: string | null; note?: string | null } = {}
-) {
-  return db.order.create({
-    data: {
-      userId: tgId,
-      total: product.price,
-      currency: product.currency,
-      status: 'pending',
-      shippingAddress: opts.shippingAddress || null, 
-      notes: opts.note || null,                     
-      items: {
-        create: [{ productId: product.id, title: product.title, price: product.price, qty: 1 }]
-      }
-    },
-    include: { items: true }
-  });
-},
+  async createSingleItemPending(
+    tgId: string,
+    product: { id: string; title: string; price: number | string | Prisma.Decimal; currency: string },
+    opts: { shippingAddress?: string | null; note?: string | null } = {}
+  ) {
+    const tenantId = await getTenantId();
 
-  listUserOrders(tgId: string, take = 5) {
+    // Load product to confirm it belongs to tenant and is active
+    const p = await db.product.findFirst({ where: { id: product.id, tenantId, active: true } });
+    if (!p) throw new Error('product unavailable');
+
+    const unitPrice = new Prisma.Decimal(product.price);
+    const total = unitPrice; // qty=1
+
+    return db.order.create({
+      data: {
+        tenantId,
+        userId: tgId,
+        total,
+        currency: p.currency,
+        status: OrderStatus.pending,
+        addressId: null,                 // not capturing address here
+        note: opts.note ?? null,         // store note in `note`
+        items: {
+          create: [{
+            tenantId,
+            productId: p.id,
+            variantId: null,
+            quantity: 1,
+            unitPrice,
+            currency: p.currency,
+            titleSnapshot: p.title,
+            variantSnapshot: null,
+          }],
+        },
+        shortCode: null,
+      },
+      include: { items: true },
+    });
+  },
+
+  async listUserOrders(tgId: string, take = 5) {
+    const tenantId = await getTenantId();
     return db.order.findMany({
-      where: { userId: tgId },
+      where: { tenantId, userId: tgId },
       include: { items: true },
       orderBy: { createdAt: 'desc' },
       take,
     });
   },
-  listByStatus(status: string | undefined, take = 10) {
-  const where = status ? { status } : {};
-  return db.order.findMany({
-    where,
-    include: { items: true, user: true }, // 👈 include user
-    orderBy: { createdAt: 'desc' },
-    take,
-  });
-},
-  async setStatus(id: string, nextStatus: string) {
-    // 1) Load order with items
-    const order = await db.order.findUnique({
-      where: { id },
+
+  async listByStatus(status: string | undefined, take = 10) {
+    const tenantId = await getTenantId();
+    const where: any = { tenantId };
+    if (status) where.status = status as OrderStatus;
+    return db.order.findMany({
+      where,
+      include: { items: true, user: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+  },
+
+  async setStatus(id: string, nextStatus: OrderStatus) {
+    const tenantId = await getTenantId();
+
+    const order = await db.order.findFirst({
+      where: { id, tenantId },
       include: { items: true },
     });
     if (!order) throw new Error('Order not found');
 
-    const current = order.status;
-
-    // 2) Guard: is this transition allowed?
+    const current = order.status as OrderStatus;
     const allowed = ALLOWED[current] || [];
     if (!allowed.includes(nextStatus)) {
       throw new Error(`Invalid transition: ${current} → ${nextStatus}`);
     }
 
-    // 3) Decide if we must decrement stock now (first time entering any fulfillment state)
-    const firstFulfillment =
-      !FULFILLMENT.has(current) && FULFILLMENT.has(nextStatus);
-
-    if (!firstFulfillment) {
-      // Simple status update, no stock change
-      return db.order.update({ where: { id }, data: { status: nextStatus } });
-    }
-
-    // 4) Atomic: check stock → decrement → update status
-    return db.$transaction(async (tx) => {
-      // Verify stock availability
-      for (const it of order.items) {
-        const p = await tx.product.findUnique({ where: { id: it.productId } });
-        if (!p || !p.isActive) throw new Error(`Product unavailable: ${it.title}`);
-        if (p.stock < it.qty) {
-          throw new Error(`Insufficient stock for ${p.title} (have ${p.stock}, need ${it.qty})`);
-        }
-      }
-
-      // Decrement stock once
-      for (const it of order.items) {
-        await tx.product.update({
-          where: { id: it.productId },
-          data: { stock: { decrement: it.qty } },
-        });
-      }
-
-      // Update status
-      return tx.order.update({ where: { id }, data: { status: nextStatus } });
-    });
+    // Stock changes are handled at checkout in the new flow.
+    return db.order.update({ where: { id }, data: { status: nextStatus } });
   },
+
   async checkoutFromCartWithDetails(userId: string, opts: { shippingAddress?: string | null; note?: string | null } = {}) {
+    const tenantId = await getTenantId();
     const cart = await db.cart.findUnique({
-      where: { userId },
-      include: { items: { include: { product: true } } },
+      where: { tenantId_userId: { tenantId, userId } },
+      include: { items: { include: { product: true, variant: true } } },
     });
     if (!cart || cart.items.length === 0) throw new Error('Cart empty');
 
     for (const it of cart.items) {
-      if (!it.product.isActive || it.product.stock < it.qty) {
-        throw new Error(`Insufficient stock for ${it.product.title}`);
-      }
+      if (!it.product.active) throw new Error(`Product unavailable: ${it.product.title}`);
+      const stock = it.variantId ? it.variant!.stock : it.product.stock;
+      if (stock < it.quantity) throw new Error(`Insufficient stock for ${it.product.title}`);
     }
 
-    const total = cart.items.reduce((s, it) => s + it.product.price * it.qty, 0);
     const currency = cart.items[0].product.currency;
+    const total = cart.items.reduce(
+      (s, it) => s.add((it.unitPrice as unknown as Prisma.Decimal).mul(it.quantity)),
+      new Prisma.Decimal(0)
+    );
 
     const order = await db.order.create({
       data: {
+        tenantId,
         userId,
         total,
         currency,
-        status: 'pending',
-        shippingAddress: opts.shippingAddress || null,
-        notes: opts.note || null,
+        status: OrderStatus.pending,
+        addressId: null,            // not capturing address here
+        note: opts.note ?? null,
         items: {
           create: cart.items.map((it) => ({
+            tenantId,
             productId: it.productId,
-            title: it.product.title,
-            price: it.product.price,
-            qty: it.qty,
+            variantId: it.variantId ?? null,
+            quantity: it.quantity,
+            unitPrice: it.unitPrice,
+            currency: it.currency,
+            titleSnapshot: it.product.title,
+            variantSnapshot: it.variant?.name ?? null,
           })),
         },
       },

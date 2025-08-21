@@ -1,50 +1,39 @@
-// src/bot/handlers/admin/orders.ts
 import { Markup } from 'telegraf';
 import { OrdersService } from '../../../services/orders.service';
 import { money } from '../../../lib/money';
 import { isAdmin } from '../../middlewares/isAdmin';
 import { db } from '../../../lib/db';
 import { Publisher } from '../../../lib/publisher';
-
-
 import { formatUserLabel } from '../../format/user';
+import { OrderStatus } from '@prisma/client';
 
-// Helper: build per-status action buttons
-function adminButtonsFor(status: string, orderId: string) {
+function adminButtonsFor(status: OrderStatus | string, orderId: string) {
   const btn = (to: string) => Markup.button.callback(to, `A_SET_${orderId}_${to}`);
 
   switch (status) {
     case 'pending':
       return Markup.inlineKeyboard([
-        [btn('confirmed'), btn('shipped'), btn('delivered')],
-        [btn('canceled')],
+        [btn('paid'), btn('shipped')],
+        [btn('cancelled')],
       ]);
-    case 'confirmed':
-      return Markup.inlineKeyboard([[btn('shipped'), btn('canceled')]]);
+    case 'paid':
+      return Markup.inlineKeyboard([[btn('shipped'), btn('cancelled')]]);
     case 'shipped':
-      return Markup.inlineKeyboard([[btn('delivered'), btn('canceled')]]);
+      return Markup.inlineKeyboard([[btn('completed'), btn('cancelled')]]);
     default:
-      return Markup.inlineKeyboard([]); // delivered/canceled -> no actions
+      return Markup.inlineKeyboard([]); // completed/cancelled -> no actions
   }
 }
 
-function userLabel(o: any) {
-  // prefer @username; else name; else the id
-  const handle = o.user?.username ? `@${o.user.username}` : (o.user?.name || o.userId);
-  // make it clickable (works even if no username)
-  return `<a href="tg://user?id=${o.userId}">${handle}</a>`;
-}
-
 export const registerAdminOrders = (bot: any) => {
-  // /admin menu
   bot.command('admin', isAdmin(), async (ctx: any) => {
     await ctx.reply(
       '🛠 Admin Panel',
       Markup.inlineKeyboard([
         [Markup.button.callback('🕗 Pending', 'A_ORDERS_pending')],
-        [Markup.button.callback('✅ Confirmed', 'A_ORDERS_confirmed')],
+        [Markup.button.callback('✅ Paid', 'A_ORDERS_paid')],
         [Markup.button.callback('📦 Shipped', 'A_ORDERS_shipped')],
-        [Markup.button.callback('📬 Delivered', 'A_ORDERS_delivered')],
+        [Markup.button.callback('📬 Completed', 'A_ORDERS_completed')],
         [Markup.button.callback('📚 All (recent)', 'A_ORDERS_all')],
         [Markup.button.callback('🧩 Products', 'A_PROD_LIST_1')],
         [Markup.button.callback('➕ New Product', 'A_PROD_NEW')],
@@ -52,20 +41,22 @@ export const registerAdminOrders = (bot: any) => {
     );
   });
 
-  // List by status
-   bot.action(/A_ORDERS_(pending|confirmed|shipped|delivered)/, isAdmin(), async (ctx: any) => {
+  bot.action(/A_ORDERS_(pending|paid|shipped|completed)/, isAdmin(), async (ctx: any) => {
     await ctx.answerCbQuery();
-    const status = ctx.match[1];
+    const status = ctx.match[1] as OrderStatus;
     const orders = await OrdersService.listByStatus(status, 10);
     if (!orders.length) return ctx.reply(`No ${status} orders.`);
 
+    const toNum = (v: any) => (v && typeof v === 'object' && 'toNumber' in v ? v.toNumber() : Number(v));
+
     for (const o of orders) {
-      const lines = o.items.map((it: any) => `• ${it.title} x${it.qty}`).join('\n');
+      const userL = o.user ? formatUserLabel(o.user) : o.userId;
+      const lines = o.items.map((it: any) => `• ${it.titleSnapshot ?? 'Item'} x${it.quantity}`).join('\n');
       await ctx.reply(
-        `#${o.id.slice(0,6)} | ${userLabel(o)}\n` +
-        `Status: ${o.status}\n` +
-        `Total: ${money(o.total, o.currency)}\n\n` +
-        `${lines}`,
+        `#${o.id.slice(0, 6)} | ${userL}\n` +
+          `Status: ${o.status}\n` +
+          `Total: ${money(toNum(o.total), String(o.currency))}\n\n` +
+          `${lines}`,
         {
           ...adminButtonsFor(o.status, o.id),
           parse_mode: 'HTML',
@@ -75,63 +66,54 @@ export const registerAdminOrders = (bot: any) => {
     }
   });
 
-  // Optional "All recent"
   bot.action('A_ORDERS_all', isAdmin(), async (ctx: any) => {
     await ctx.answerCbQuery();
-    const orders = await OrdersService.listByStatus(undefined as any, 10); // implement a listRecent() in service if you prefer
+    const orders = await OrdersService.listByStatus(undefined as any, 10);
     if (!orders?.length) return ctx.reply('No recent orders.');
 
+    const toNum = (v: any) => (v && typeof v === 'object' && 'toNumber' in v ? v.toNumber() : Number(v));
+
     for (const o of orders) {
-        const userLabel = o.user ? formatUserLabel(o.user) : o.userId; // service must include user
-        const lines = o.items.map((it: any) => `• ${it.title} x${it.qty}`).join('\n');
-
-        await ctx.reply(
-            `#${o.id.slice(0,6)} | ${userLabel}\nStatus: ${o.status}\nTotal: ${money(o.total, o.currency)}\n${lines}`,
-            {
-            ...adminButtonsFor(o.status, o.id),
-            parse_mode: 'HTML', // 👈 so the <a href="tg://user?id=..."> works
-            disable_web_page_preview: true,
-            }
-        );
-    }    
-  });
-
-  // Status updates
-  // Status updates
-bot.action(/A_SET_([a-z0-9]+)_(pending|confirmed|shipped|delivered|canceled)/, isAdmin(), async (ctx: any) => {
-  await ctx.answerCbQuery();
-  const [, id, next] = ctx.match;
-
-  // Load current order to know the user & current status
-  const before = await db.order.findUnique({
-    where: { id },
-    include: { user: true },
-  });
-  if (!before) return ctx.reply('Order not found');
-
-  try {
-    // Transition (guards + stock decrement handled inside service)
-    await OrdersService.setStatus(id, next);
-
-    await ctx.reply(`✅ Order ${id.slice(0,6)} → ${next}`);
-
-    // DM the buyer about the change (best-effort)
-    try {
-      await ctx.telegram.sendMessage(
-        before.userId,
-        `📦 Your order #${id.slice(0,6)} is now *${next}*.`,
-        { parse_mode: 'Markdown' }
+      const userL = o.user ? formatUserLabel(o.user) : o.userId;
+      const lines = o.items.map((it: any) => `• ${it.titleSnapshot ?? 'Item'} x${it.quantity}`).join('\n');
+      await ctx.reply(
+        `#${o.id.slice(0, 6)} | ${userL}\nStatus: ${o.status}\nTotal: ${money(toNum(o.total), String(o.currency))}\n${lines}`,
+        {
+          ...adminButtonsFor(o.status, o.id),
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }
       );
-    } catch {}
+    }
+  });
 
-    // Notify admin group about the change (best-effort)
+  bot.action(/A_SET_([a-z0-9]+)_(pending|paid|shipped|completed|cancelled)/, isAdmin(), async (ctx: any) => {
+    await ctx.answerCbQuery();
+    const [, id, next] = ctx.match as [string, string, OrderStatus];
+
+    const before = await db.order.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!before) return ctx.reply('Order not found');
+
     try {
-      await Publisher.notifyOrderStatus(ctx.bot ?? ctx, id, before.status, next);
-    } catch {}
+      await OrdersService.setStatus(id, next as OrderStatus);
+      await ctx.reply(`✅ Order ${id.slice(0, 6)} → ${next}`);
 
-  } catch (e: any) {
-    await ctx.reply(`❌ ${e.message || 'Failed to update status'}`);
-  }
-});
+      try {
+        await ctx.telegram.sendMessage(
+          before.userId,
+          `📦 Your order #${id.slice(0, 6)} is now *${next}*.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch {}
 
+      try {
+        await Publisher.notifyOrderStatus(ctx.bot ?? ctx, id, before.status, next);
+      } catch {}
+    } catch (e: any) {
+      await ctx.reply(`❌ ${e.message || 'Failed to update status'}`);
+    }
+  });
 };

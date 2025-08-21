@@ -1,10 +1,9 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import { db } from '../../../lib/db';
 import { ENV } from '../../../config/env';
 import { Publisher } from '../../../lib/publisher';
 
-const awaitingPhotoFor = new Map<string, string>(); 
-// key: admin tgId, value: productId
+const awaitingPhotoFor = new Map<string, string>(); // key: admin tgId, value: productId
 
 function isAdmin(ctx: any) {
   const id = String(ctx.from?.id || '');
@@ -12,7 +11,6 @@ function isAdmin(ctx: any) {
 }
 
 export function registerAdminProductPhoto(bot: Telegraf) {
-  // 1) Command to start photo capture
   bot.command('product_photo', async (ctx: any) => {
     if (!isAdmin(ctx)) return;
     const args = (ctx.message?.text || '').trim().split(/\s+/);
@@ -32,30 +30,36 @@ export function registerAdminProductPhoto(bot: Telegraf) {
     );
   });
 
-  // 2) Photo handler (admin DM)
   bot.on('photo', async (ctx: any, next: any) => {
     if (!isAdmin(ctx)) return next();
 
     const adminId = String(ctx.from.id);
     const productId = awaitingPhotoFor.get(adminId);
-    if (!productId) return next(); // not awaiting, ignore
+    if (!productId) return next();
 
-    // pick the highest resolution photo
     const photos = ctx.message?.photo;
     if (!photos || !photos.length) return next();
 
     const fileId = photos[photos.length - 1].file_id;
     awaitingPhotoFor.delete(adminId);
 
-    // Save the file_id to product
-    await db.product.update({
+    const product = await db.product.findUnique({
       where: { id: productId },
-      data: { photoFileId: fileId },
+      select: { id: true, tenantId: true, title: true },
+    });
+    if (!product) return ctx.reply('Product not found');
+
+    await db.productImage.create({
+      data: {
+        tenantId: product.tenantId,
+        productId: product.id,
+        url: `tg:file_id:${fileId}`,
+        position: 0,
+      },
     });
 
     await ctx.reply('✅ Photo saved to product.');
 
-    // Optional: immediately publish to group
     try {
       await Publisher.postProduct(bot, productId);
       await ctx.reply('📣 Posted to group.');

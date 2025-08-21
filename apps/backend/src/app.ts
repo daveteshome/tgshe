@@ -19,6 +19,9 @@ import { registerCartHandlers } from './bot/handlers/user/cart';
 import { registerAdminProductPhoto } from './bot/handlers/admin/product_photo';
 
 import { api } from './api/routes';
+import { resolveTenant } from './middlewares/resolveTenant';
+import { tenantApi } from './routes/tenantApi';
+import { telegramAuth } from './api/telegramAuth'; // must set req.user = { tgId }
 
 export function createApp() {
   const app = express();
@@ -33,7 +36,7 @@ export function createApp() {
   app.use(cors({
     origin: [
       ENV.WEBAPP_URL,
-      'https://210ea63e9193.ngrok-free.app',
+      'https://a2d32fb22abd.ngrok-free.app', //front
       'https://web.telegram.org',
       'https://oauth.telegram.org',
       /\.t\.me$/,
@@ -57,7 +60,7 @@ export function createApp() {
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     // Use Telegram userId when present; otherwise IPv6-safe IP key
-    keyGenerator: (req: any) => (req.userId ?? ipKeyGenerator(req.ip)),
+    keyGenerator: (req: any) => (req.user?.tgId ?? req.userId ?? ipKeyGenerator(req.ip)),
     message: {
       error: 'Too many requests, please try again later.'
     }
@@ -65,6 +68,9 @@ export function createApp() {
 
   // Mount API with limiter
   app.use('/api', apiLimiter);
+  // --- Tenant-aware API (auth required) ---
+  // Order matters: limiter above applies to this route because it shares the '/api' prefix.
+  app.use('/api/t/:slug', resolveTenant, telegramAuth, tenantApi);
   app.use('/api', api);
 
   // ----- Telegram Bot -----

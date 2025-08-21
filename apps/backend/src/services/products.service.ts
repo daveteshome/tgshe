@@ -1,59 +1,76 @@
 import { db } from '../lib/db';
+import { Prisma } from '@prisma/client';
+import { getTenantId } from './tenant.util';
 
 export const ProductsService = {
-  list({ page = 1, perPage = 5, search = '' as string, categoryId = undefined as string | undefined }) {
-    const where: any = {};
+  async list({ page = 1, perPage = 5, search = '' as string, categoryId = undefined as string | undefined }) {
+    const tenantId = await getTenantId();
+    const where: any = { tenantId };
     if (search) where.title = { contains: search, mode: 'insensitive' };
-    if (categoryId) where.categoryId = categoryId;
+    // categoryId: not used in new schema; ignore for now
     return db.product.findMany({
       where,
-      orderBy: [{ isActive: 'desc' }, { title: 'asc' }],
+      orderBy: [{ active: 'desc' }, { title: 'asc' }],
       skip: (page - 1) * perPage,
       take: perPage,
-      include: { category: true },
+      include: { images: { orderBy: { position: 'asc' }, take: 1 } },
     });
   },
 
-  count({ search = '', categoryId = undefined as string | undefined }) {
-    const where: any = {};
+  async count({ search = '', categoryId = undefined as string | undefined }) {
+    const tenantId = await getTenantId();
+    const where: any = { tenantId };
     if (search) where.title = { contains: search, mode: 'insensitive' };
-    if (categoryId) where.categoryId = categoryId;
     return db.product.count({ where });
   },
 
-  toggleActive(id: string) {
-    return db.product.update({ where: { id }, data: { isActive: { set: undefined }, } })
-      .catch(async () => {
-        const p = await db.product.findUnique({ where: { id } });
-        return db.product.update({ where: { id }, data: { isActive: !p?.isActive } });
-      });
+  async toggleActive(id: string) {
+    const p = await db.product.findUnique({ where: { id } });
+    if (!p) throw new Error('not found');
+    return db.product.update({ where: { id }, data: { active: !p.active } });
   },
 
-  setActive(id: string, isActive: boolean) {
-    return db.product.update({ where: { id }, data: { isActive } });
+  setActive(id: string, active: boolean) {
+    return db.product.update({ where: { id }, data: { active } });
   },
 
   delete(id: string) {
     return db.product.delete({ where: { id } });
   },
 
-  update(id: string, patch: Partial<{ title: string; price: number; stock: number; photoUrl: string | null; photoFileId: string | null; categoryId: string; description: string | null }>) {
-    return db.product.update({ where: { id }, data: patch });
+  update(
+    id: string,
+    patch: Partial<{ title: string; price: number; stock: number; description: string | null; active: boolean }>
+  ) {
+    const data: any = { ...patch };
+    if (typeof patch.price !== 'undefined') data.price = new Prisma.Decimal(patch.price);
+    return db.product.update({ where: { id }, data });
   },
 
-  async create(data: { title: string; price: number; stock: number; photoUrl?: string | null; photoFileId?: string | null; description?: string | null; categoryId?: string | null; currency?: string }) {
-   return db.product.create({ data: { currency: 'USD', ...data } });
+  async create(data: { title: string; price: number; stock: number; description?: string | null; currency?: string }) {
+    const tenantId = await getTenantId();
+    return db.product.create({
+      data: {
+        tenantId,
+        title: data.title,
+        price: new Prisma.Decimal(data.price),
+        stock: data.stock,
+        description: data.description ?? null,
+        currency: (data.currency as any) || 'ETB',
+        active: true,
+      },
+    });
   },
 
-  listCategories() {
-    return db.category.findMany({ orderBy: { name: 'asc' } });
+  // Category helpers no longer applicable; keep stubs so callers don't break
+  async listCategories() {
+    return [{ id: 'all', name: 'All' }];
   },
-
-  upsertCategoryByName(name: string) {
-    return db.category.upsert({ where: { name }, update: {}, create: { name } });
+  async upsertCategoryByName(_name: string) {
+    return { id: 'all', name: 'All' };
   },
 
   get(id: string) {
-    return db.product.findUnique({ where: { id } });
+    return db.product.findUnique({ where: { id }, include: { images: { orderBy: { position: 'asc' }, take: 4 } } });
   },
 };

@@ -16,4 +16,10 @@ export const ENV = {
   ADMIN_GROUP_CHAT_ID: (process.env.ADMIN_GROUP_CHAT_ID || ''),
   NODE_ENV: process.env.NODE_ENV || 'development',
   DATABASE_URL: required('DATABASE_URL'),
+
+  // NEW
+  DEFAULT_TENANT_SLUG: process.env.DEFAULT_TENANT_SLUG ?? 'demo',
+
+  // (optional) if you use it elsewhere
+  WEBAPP_ORIGIN: process.env.WEBAPP_ORIGIN ?? '',
 };

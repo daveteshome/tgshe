@@ -152,9 +152,13 @@ api.post('/buy-now', async (req: any, res) => {
   const { productId, shippingAddress, note } = req.body || {};
   if (!productId) return res.status(400).json({ error: 'productId required' });
   const p = await db.product.findUnique({ where: { id: String(productId) } });
-  if (!p || !p.isActive) return res.status(400).json({ error: 'product unavailable' });
+  if (!p || !p.active) return res.status(400).json({ error: 'product unavailable' });
   try {
-    const order = await OrdersService.createSingleItemPending(userId, { id: p.id, title: p.title, price: p.price, currency: p.currency }, { shippingAddress, note });
+    const order = await OrdersService.createSingleItemPending(
+   userId,
+   { id: p.id, title: p.title, price: p.price.toNumber(), currency: p.currency },
+   { shippingAddress, note }
+ );
     res.json(order);
   } catch (e: any) {
     res.status(400).json({ error: e?.message || 'buy-now failed' });
@@ -185,20 +189,17 @@ api.get('/profile', async (req: any, res) => {
     tgId: userId,
     username: u?.username ?? null,
     name: u?.name ?? null,
-    phone: u?.phone ?? null,
-    city: u?.city ?? null,
-    place: u?.place ?? null,
-    specialReference: u?.specialReference ?? null,
+    phone: u?.phone ?? null
   });
 });
 
 api.put('/profile', async (req: any, res) => {
   const userId = req.userId!;
-  const { phone, city, place, specialReference } = req.body || {};
+  const { phone, name, username } = req.body || {};
   const u = await db.user.upsert({
     where: { tgId: userId },
-    update: { phone, city, place, specialReference },
-    create: { tgId: userId, phone, city, place, specialReference },
+    update: { phone, name, username },
+    create: { tgId: userId, phone, name, username },
   });
   res.json(u);
 });

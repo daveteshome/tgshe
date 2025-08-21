@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "prisma": { "seed": "ts-node prisma/seed.ts" },
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
@@ -16,6 +17,7 @@
     "react-router-dom": "^7.8.1"
   },
   "devDependencies": {
+    "ts-node": "^10.9.2",
     "@eslint/js": "^9.33.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",

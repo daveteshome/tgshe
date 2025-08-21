@@ -1,184 +1,166 @@
-import { ENV } from '../config/env';
+// apps/backend/src/lib/publisher.ts
+import { Markup, Telegraf } from 'telegraf';
 import { db } from './db';
+import { ENV } from '../config/env';
 import { money } from './money';
-import type { Telegraf } from 'telegraf';
+import type { OrderStatus, Currency } from '@prisma/client';
 
-function captionFor(p: any) {
-  return (
-    `*${p.title}*\n` +
-    (p.description ? `${p.description}\n` : '') +
-    `💵 Price: ${money(p.price, p.currency)}\n` +
-    `📦 Stock: ${p.stock}\n` +
-    (p.category ? `📂 Category: ${p.category.name}\n` : '')
-  );
+function esc(s: any) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function toNum(v: any) {
+  return v && typeof v === 'object' && 'toNumber' in v ? v.toNumber() : Number(v);
+}
+function asCurrency(c: any): string {
+  return String(c as Currency);
 }
 
-function esc(s: string) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function chooseImageInput(url?: string | null) {
+  if (!url) return null;
+  if (url.startsWith('tg:file_id:')) return url.replace(/^tg:file_id:/, '');
+  if (/^https?:\/\//i.test(url)) return { url };
+  return null;
 }
 
-function mediaFor(p: any) {
-  if (p.photoFileId) return p.photoFileId;
-  if (p.photoUrl && /^https?:\/\//i.test(p.photoUrl)) return { url: p.photoUrl };
-  return { url: 'https://placehold.co/800x500/png?text=Product' };
+function ensureTelegram(botOrCtx: any) {
+  // Works with either Telegraf instance or ctx
+  return botOrCtx?.telegram ?? botOrCtx;
 }
 
-function orderHeadline(o: any) {
-  const code = `#${o.id.slice(0,6)}`;
-  const items = o.items?.reduce((s: number, it: any) => s + it.qty, 0) ?? 0;
-  const who = o.user?.username ? `@${o.user.username}` : `tg:${o.userId}`;
-  return `${code} • ${items} item${items===1?'':'s'} • ${money(o.total, o.currency)} • ${who}`;
-}
-function orderDetails(o: any) {
-  const lines = [
-    `*${orderHeadline(o)}*`,
-    `Status: *${o.status}*`,
-  ];
-  if (o.shippingAddress) lines.push(`Address: ${o.shippingAddress}`);
-  if (o.notes) lines.push(`Note: ${o.notes}`);
-  if (o.items?.length) lines.push('', ...o.items.map((it: any) => `• ${it.title} x${it.qty} — ${money(it.price * it.qty, o.currency)}`));
-  return lines.join('\n');
+function buyerLink(tgId: string, handle?: string | null, name?: string | null) {
+  const label = handle ? `@${handle}` : (name || tgId);
+  return `<a href="tg://user?id=${tgId}">${esc(label)}</a>`;
 }
 
-export class Publisher {
-  // Always end up with a post in the group: edit if exists, otherwise create.
-  static async upsertProductPost(bot: Telegraf | any, productId: string) {
+export const Publisher = {
+  /**
+   * Post a product to the group/channel configured in ENV.GROUP_CHAT_ID.
+   * Uses the first ProductImage if present. Sends fresh message every time.
+   */
+  async postProduct(botOrCtx: Telegraf | any, productId: string) {
+    const telegram = ensureTelegram(botOrCtx);
+    const chatId = ENV.GROUP_CHAT_ID;
+    if (!chatId) throw new Error('GROUP_CHAT_ID is not configured');
+
     const p = await db.product.findUnique({
       where: { id: productId },
-      include: { category: true },
+      include: {
+        images: { orderBy: { position: 'asc' } },
+      },
     });
     if (!p) throw new Error('Product not found');
 
-    const chatId = p.groupChatId || ENV.GROUP_CHAT_ID;
-    const messageId = p.groupMessageId ? Number(p.groupMessageId) : null;
+    const price = toNum(p.price);
+    const cur = asCurrency(p.currency);
+    const imgUrl = p.images[0]?.url || null;
+    const input = chooseImageInput(imgUrl);
 
-    const caption = captionFor(p);
-    const media = mediaFor(p);
+    const caption =
+      `<b>${esc(p.title)}</b>\n` +
+      (p.description ? `${esc(p.description)}\n` : '') +
+      `Price: ${esc(money(price, cur))}\n` +
+      `Stock: ${p.stock} ${p.active ? '' : '(inactive)'}`;
 
-    // If we have a previous message in (this) group, try editing it
-    if (messageId && chatId) {
-      try {
-        // Try editing both media and caption (works for bots on their own messages)
-        await bot.telegram.editMessageMedia(
-          chatId,
-          messageId,
-          undefined,
-          {
-            type: 'photo',
-            media: typeof media === 'string' ? media : (media as any).url,
-            caption,
-            parse_mode: 'Markdown',
-          } as any
-        );
-        return;
-      } catch (_) {
-        // fall through to sending a new message
-      }
+    const kb = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('🛒 Add to Cart', `CART_ADD_${p.id}`),
+        Markup.button.callback('⚡️ Buy Now', `BUY_${p.id}`),
+      ],
+    ]);
+
+    if (input) {
+      await telegram.sendPhoto(chatId, input as any, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: kb.reply_markup,
+        disable_web_page_preview: true,
+      });
+    } else {
+      await telegram.sendMessage(chatId, caption, {
+        parse_mode: 'HTML',
+        reply_markup: kb.reply_markup,
+        disable_web_page_preview: true,
+      });
     }
+  },
 
-    // Otherwise, send a fresh post
-    const msg = await bot.telegram.sendPhoto(chatId, media as any, {
-      caption,
-      parse_mode: 'Markdown',
-    });
+  /**
+   * "Upsert" product post — without persisted message ids we just post a fresh message.
+   */
+  async upsertProductPost(botOrCtx: Telegraf | any, productId: string) {
+    return this.postProduct(botOrCtx, productId);
+  },
 
-    // Save the new message reference
-    await db.product.update({
-      where: { id: productId },
-      data: {
-        groupMessageId: String(msg.message_id),
-        groupChatId: String(chatId),
-      },
-    });
-  }
+  /**
+   * Notify group about a new order.
+   */
+  async notifyOrderNew(botOrCtx: Telegraf | any, orderId: string) {
+    const telegram = ensureTelegram(botOrCtx);
+    const chatId = ENV.GROUP_CHAT_ID;
+    if (!chatId) return; // best-effort
 
-  // If you still want a "fresh post every time" call this instead of upsert.
-  static async postProduct(bot: Telegraf | any, productId: string) {
-    const p = await db.product.findUnique({
-      where: { id: productId },
-      include: { category: true },
-    });
-    if (!p) throw new Error('Product not found');
-
-    const caption = captionFor(p);
-    const media = mediaFor(p);
-
-    const msg = await bot.telegram.sendPhoto(ENV.GROUP_CHAT_ID, media as any, {
-      caption,
-      parse_mode: 'Markdown',
-    });
-
-    await db.product.update({
-      where: { id: productId },
-      data: {
-        groupMessageId: String(msg.message_id),
-        groupChatId: String(ENV.GROUP_CHAT_ID),
-      },
-    });
-  }
-
-  static async notifyOrderNew(bot: Telegraf | any, orderId: string) {
-    if (!ENV.ADMIN_GROUP_CHAT_ID) return; // gracefully no-op if unset
     const o = await db.order.findUnique({
       where: { id: orderId },
-      include: { items: true, user: true },
+      include: {
+        user: true,
+        items: true,
+        address: true,
+      },
     });
     if (!o) return;
-    await bot.telegram.sendMessage(
-      ENV.ADMIN_GROUP_CHAT_ID,
-      `🆕 *New order*\n${orderDetails(o)}`,
-      { parse_mode: 'Markdown' }
-    );
-  }
 
-  static async notifyOrderStatus(bot: any, orderId: string, prev: string, next: string) {
-  // --- fetch order with items and user
-  const o = await db.order.findUnique({
-    where: { id: orderId },
-    include: { items: true, user: true },
-  });
-  if (!o) return;
+    const itemsList =
+      (o.items || [])
+        .map(it => `• ${esc(it.titleSnapshot ?? 'Item')} ×${it.quantity}`)
+        .join('\n') || '—';
 
-  // ---------- USER DM (details + item list + buttons) ----------
-  const itemsList = (o.items || []).map(it => `• ${esc(it.title)} ×${it.qty}`).join('\n') || '—';
-  const lines = [
-    `📦 Your order <b>#${esc(o.id.slice(0,6))}</b> status updated`,
-    `<b>${esc(prev)}</b> → <b>${esc(next)}</b>`,
-    '',
-    '<b>Items</b>',
-    itemsList,
-    '',
-    `<b>Total:</b> ${esc(money(o.total, o.currency))}`,
-  ];
-  if (o.shippingAddress) lines.push(`<b>Address:</b>\n${esc(o.shippingAddress)}`);
-  if (next === 'shipped')   lines.push('🚚 Your package is on the way.');
-  if (next === 'delivered') lines.push('🎉 Delivered — enjoy!');
-  if (next === 'canceled')  lines.push('⚠️ This order was canceled. If this is unexpected, reply here.');
+    const lines: string[] = [
+      `🆕 <b>New order</b> #${esc(o.id.slice(0, 6))}`,
+      `<b>Buyer:</b> ${buyerLink(o.userId, o.user?.username, o.user?.name)}`,
+      `<b>Status:</b> ${esc(o.status)}`,
+      `<b>Total:</b> ${esc(money(toNum(o.total), asCurrency(o.currency)))}`,
+      `<b>Items:</b>\n${itemsList}`,
+    ];
 
-  // Build up to 3 “View item” buttons (callback to VIEW_ITEM_<productId>)
-  const viewButtons = (o.items || [])
-    .slice(0, 3)
-    .map(it => [{ text: `🔎 ${it.title}`.slice(0, 30), callback_data: `VIEW_ITEM_${it.productId}` }]);
+    if (o.user?.phone) lines.push(`<b>Phone:</b> ${esc(o.user.phone)}`);
 
-  try {
-    await bot.telegram.sendMessage(
-      o.userId,
-      lines.join('\n'),
-      {
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        reply_markup: viewButtons.length ? { inline_keyboard: viewButtons } : undefined,
-      }
-    );
-  } catch {}
+    if (o.address) {
+      const addrMain = [o.address.city, o.address.line1].filter(Boolean).join(', ');
+      const addrRef = o.address.line2 ? `\nRef: ${o.address.line2}` : '';
+      lines.push(`<b>Address:</b>\n${esc(addrMain + addrRef)}`);
+    }
 
-  // ---------- ADMIN GROUP (same as before) ----------
-  if (!ENV.ADMIN_GROUP_CHAT_ID) return;
-  await bot.telegram.sendMessage(
-    ENV.ADMIN_GROUP_CHAT_ID,
-    `🔔 *Order status changed* ${prev} → *${next}*\n${orderDetails(o)}`,
-    { parse_mode: 'Markdown' }
-  );
-}
+    const buttons =
+      (o.items || []).slice(0, 3).map(it => [
+        { text: `🔎 ${(it.titleSnapshot ?? 'Item').slice(0, 30)}`, callback_data: `VIEW_ITEM_${it.productId}` },
+      ]);
 
-}
+    await telegram.sendMessage(chatId, lines.join('\n'), {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: buttons },
+      disable_web_page_preview: true,
+    });
+  },
+
+  /**
+   * Notify group that an order changed status.
+   */
+  async notifyOrderStatus(botOrCtx: Telegraf | any, orderId: string, from: OrderStatus, to: OrderStatus) {
+    const telegram = ensureTelegram(botOrCtx);
+    const chatId = ENV.GROUP_CHAT_ID;
+    if (!chatId) return; // best-effort
+
+    const o = await db.order.findUnique({
+      where: { id: orderId },
+      include: { user: true },
+    });
+    if (!o) return;
+
+    const msg =
+      `🔔 Order #${esc(o.id.slice(0, 6))} ` +
+      `for ${buyerLink(o.userId, o.user?.username, o.user?.name)} ` +
+      `changed: <b>${esc(from)} → ${esc(to)}</b>`;
+
+    await telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+  },
+};

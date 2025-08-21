@@ -6,10 +6,8 @@ import { money } from '../../../lib/money';
 const PLACEHOLDER = 'https://placehold.co/800x500/png?text=Product';
 
 // helper: choose Telegram photo input
-function photoInput(p: { photoFileId?: string | null; photoUrl?: string | null }) {
-  if (p.photoFileId) return p.photoFileId; // best: Telegram-hosted
-  if (p.photoUrl && /^https?:\/\//i.test(p.photoUrl)) return { url: p.photoUrl };
-  return { url: PLACEHOLDER };
+function photoInput(url?: string | null) {
+  return url && /^https?:\/\//i.test(url) ? { url } : { url: PLACEHOLDER };
 }
 
 export const registerCartHandlers = (bot: any) => {
@@ -31,36 +29,26 @@ export const registerCartHandlers = (bot: any) => {
       return ctx.reply('🧺 Your cart is empty.');
     }
 
-    const total = cart.items.reduce((s, it) => s + it.product.price * it.qty, 0);
+    const total = cart.items.reduce((s, it) => s + it.price * it.qty, 0);
 
     for (const it of cart.items) {
-      const line = `${it.product.title} x${it.qty} — ${money(it.product.price * it.qty, it.product.currency)}`;
+      const line = `${it.title} x${it.qty} — ${money(it.price * it.qty, it.currency)}`;
       const kb = Markup.inlineKeyboard([
         [Markup.button.callback('➖', `CART_DEC_${it.id}`), Markup.button.callback('➕', `CART_INC_${it.id}`)],
       ]);
-
-      const input = photoInput(it.product);
+      const input = photoInput(it.imageUrl);
 
       try {
         await ctx.replyWithPhoto(input as any, { caption: line, reply_markup: kb.reply_markup });
-      } catch (err) {
-        // fallback if file_id expired or url failed
-        try {
-          const fallback =
-            it.product.photoUrl && /^https?:\/\//i.test(it.product.photoUrl)
-              ? { url: it.product.photoUrl }
-              : { url: PLACEHOLDER };
-          await ctx.replyWithPhoto(fallback as any, { caption: line, reply_markup: kb.reply_markup });
-        } catch {
-          await ctx.reply(line, kb);
-        }
+      } catch {
+        await ctx.reply(line, kb);
       }
     }
 
     const footer = Markup.inlineKeyboard([
       [Markup.button.callback('🧹 Clear', 'CART_CLEAR'), Markup.button.callback('✅ Checkout', 'CHECKOUT')],
     ]);
-    await ctx.reply(`Total: ${money(total)}`, footer);
+    await ctx.reply(`Total: ${money(total, cart.items[0]?.currency || 'ETB')}`, footer);
   });
 
   bot.action(/CART_INC_(.+)/, async (ctx: any) => {
@@ -81,22 +69,3 @@ export const registerCartHandlers = (bot: any) => {
     await ctx.reply('🧺 Cart cleared.');
   });
 };
-
-// Minimal checkout (no phone/address in this pass)
-// export const registerCheckoutHandler = (bot: any) => {
-//   bot.action('CHECKOUT', async (ctx: any) => {
-//     await ctx.answerCbQuery();
-//     const userId = String(ctx.from.id);
-//     try {
-//       const order = await OrdersService.checkoutFromCartWithDetails(userId);
-//       await ctx.reply(
-//         `✅ Order placed!\n` +
-//         `#${order.id.slice(0,6)}\n` +
-//         `Total: ${money(order.total, order.currency)}\n` +
-//         `Status: ${order.status}\n(See “📜 My Orders”.)`
-//       );
-//     } catch (e: any) {
-//       await ctx.reply(`❌ Checkout failed: ${e.message || 'unknown error'}`);
-//     }
-//   });
-// };

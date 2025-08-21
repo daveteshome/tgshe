@@ -1,31 +1,33 @@
 import { db } from '../lib/db';
+import { getTenantId } from './tenant.util';
 
 export const CatalogService = {
-  listCategories() {
-    return db.category.findMany({ orderBy: { name: 'asc' } });
+  // Provide a minimal "All" category so your bot UI keeps working
+  async listCategories() {
+    return [{ id: 'all', name: 'All' }];
   },
 
-  // existing unpaged (keep if you like)
-  listProductsByCategory(categoryId: string) {
-    return db.product.findMany({
-      where: { categoryId, isActive: true },
+  async listProductsByCategoryPaged(categoryId: string, page: number, perPage: number) {
+    const tenantId = await getTenantId();
+    const where = { tenantId, active: true }; // ignore categoryId for now
+    const total = await db.product.count({ where });
+    const items = await db.product.findMany({
+      where,
       orderBy: [{ title: 'asc' }],
+      skip: (page - 1) * perPage,
+      take: perPage,
+      include: { images: { orderBy: { position: 'asc' }, take: 1 } },
     });
-  },
-
-  // ✅ NEW: paged version
-  async listProductsByCategoryPaged(categoryId: string, page = 1, perPage = 3) {
-    const where: any = { categoryId, isActive: true };
-    const [items, total] = await Promise.all([
-      db.product.findMany({
-        where,
-        orderBy: [{ title: 'asc' }],
-        skip: (page - 1) * perPage,
-        take: perPage,
-      }),
-      db.product.count({ where }),
-    ]);
     const pages = Math.max(1, Math.ceil(total / perPage));
     return { items, total, pages };
+  },
+
+  async listProductsByCategory(_categoryId: string) {
+    const tenantId = await getTenantId();
+    return db.product.findMany({
+      where: { tenantId, active: true },
+      orderBy: [{ title: 'asc' }],
+      include: { images: { orderBy: { position: 'asc' }, take: 1 } },
+    });
   },
 };

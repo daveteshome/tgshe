@@ -1,8 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// prisma/schema.prisma
+// Multi-tenant Telegram e‑commerce schema
 
 generator client {
   provider = "prisma-client-js"
@@ -13,93 +10,434 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// ===== Enums =====
+
+enum Currency {
+  ETB
+  USD
+  EUR
+}
+
+enum OrderStatus {
+  pending
+  paid
+  shipped
+  completed
+  cancelled
+}
+
+enum PaymentProvider {
+  STRIPE
+  TELEBIRR
+  WEBIRR
+  MANUAL
+}
+
+enum PaymentStatus {
+  requires_payment
+  processing
+  succeeded
+  failed
+  canceled
+  refunded
+}
+
+enum InventoryMoveType {
+  IN
+  OUT
+  ADJUST
+}
+
+enum WebhookType {
+  PAYMENT
+  FULFILLMENT
+  OTHER
+}
+
+enum PlanInterval {
+  MONTH
+  YEAR
+}
+
+enum SubscriptionStatus {
+  active
+  past_due
+  canceled
+  trialing
+  inactive
+}
+
+/// ===== Core Multi-tenant Entities =====
+
+model Tenant {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Back-relations for ALL tenant-scoped data
+  addresses       Address[]
+  productImages   ProductImage[]
+  productVariants ProductVariant[]
+  inventoryMoves  InventoryMove[]
+  cartItems       CartItem[]
+  orderItems      OrderItem[]
+  favorites       Favorite[]
+  paymentIntents  PaymentIntent[]
+  webhookEvents   WebhookEvent[]
+  subscriptions   TenantSubscription[]
+  invoices        TenantInvoice[]
+  tenantPayments  TenantPayment[]
+  products        Product[]
+  carts           Cart[]
+  orders          Order[]
+
+  @@index([slug])
+}
+
+/// Telegram user (global across tenants). We keep tenant-scoped data (addresses, carts, etc.) via separate tenantId FKs.
 model User {
   tgId      String   @id
   username  String?
   name      String?
   phone     String?
-
-  city              String?
-  place             String?     // neighborhood / area
-  specialReference  String?     // landmark / directions
-
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   orders    Order[]
-  cart      Cart?
+  carts     Cart[] // one cart per tenant; see Cart model
+  favorites Favorite[]
+  addresses Address[]
 }
 
-model Category {
-  id       String    @id @default(cuid())
-  name     String    @unique
-  products Product[]
+/// Shipping / billing address scoped to a tenant+user
+model Address {
+  id       String @id @default(cuid())
+  tenantId String
+  userId   String
+
+  label      String? // e.g., "Home"
+  line1      String
+  line2      String?
+  city       String
+  region     String?
+  country    String
+  postalCode String?
+  latitude   Float?
+  longitude  Float?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [tgId])
+  Order  Order[]
+
+  @@unique([tenantId, userId, label])
+  @@index([tenantId])
+  @@index([userId])
 }
+
+/// ===== Catalog =====
 
 model Product {
-  id         String     @id @default(cuid())
-  title      String
-  price      Int // minor units (e.g., cents)
-  currency   String     @default("USD")
-  photoUrl   String?
-  stock      Int        @default(0)
-  isActive   Boolean    @default(true)
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  description String?
+  sku         String?
+  price       Decimal  @db.Decimal(10, 2)
+  currency    Currency
+  stock       Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  photoFileId     String?    // Telegram photo file_id from admin DM
-  groupMessageId  String?    // message id of the post in the group
-  groupChatId     String?    // store where it was posted (lets you support multiple groups later)
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  images     ProductImage[]
+  variants   ProductVariant[]
+  favorites  Favorite[]
+  inventory  InventoryMove[]
+  orderItems OrderItem[]
+  CartItem   CartItem[]
 
-  description     String?
-  
-  categoryId String?
-  category   Category?  @relation(fields: [categoryId], references: [id])
-  cartItems  CartItem[]
-
-  @@index([categoryId])
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([active])
   @@index([title])
 }
 
-model Order {
-  id                 String      @id @default(cuid())
-  userId             String
-  total              Int
-  currency           String
-  status             String      @default("pending") // pending, confirmed, shipped, delivered, canceled
-  paymentMethod      String      @default("external") // external/COD/transfer/mobile_money
-  paymentStatus      String      @default("unpaid") // unpaid, paid, failed, refunded
-  externalPaymentRef String? // your reference/tx id from outside
-  shippingAddress    String? // optional free-form for now
-  notes              String? // admin/user notes
-  createdAt          DateTime    @default(now())
-  items              OrderItem[]
-  user               User        @relation(fields: [userId], references: [tgId])
-
-  @@index([userId, createdAt])
-  @@index([paymentStatus, status])
-}
-
-model OrderItem {
-  id        String @id @default(cuid())
-  orderId   String
+model ProductImage {
+  id        String   @id @default(cuid())
+  tenantId  String
   productId String
-  title     String
-  price     Int
-  qty       Int
-  order     Order  @relation(fields: [orderId], references: [id])
+  url       String
+  alt       String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([productId])
 }
+
+model ProductVariant {
+  id        String   @id @default(cuid())
+  tenantId  String
+  productId String
+  name      String // e.g., "Size M / Red"
+  priceDiff Decimal? @db.Decimal(10, 2) // delta from product price; nullable if same
+  sku       String?
+  stock     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([productId])
+}
+
+/// Stock mutations per product
+model InventoryMove {
+  id        String            @id @default(cuid())
+  tenantId  String
+  productId String
+  kind      InventoryMoveType
+  quantity  Int
+  reason    String?
+  createdAt DateTime          @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([productId])
+}
+
+/// ===== Carts & Orders =====
 
 model Cart {
-  id     String     @id @default(cuid())
-  userId String     @unique
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user   User       @relation(fields: [userId], references: [tgId])
   items  CartItem[]
+
+  @@unique([tenantId, userId]) // one cart per user *per tenant*
+  @@index([tenantId])
+  @@index([userId])
 }
 
 model CartItem {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
+  tenantId  String
   cartId    String
   productId String
-  qty       Int     @default(1)
-  cart      Cart    @relation(fields: [cartId], references: [id])
-  product   Product @relation(fields: [productId], references: [id])
+  variantId String?
+  quantity  Int      @default(1)
+  unitPrice Decimal  @db.Decimal(10, 2)
+  currency  Currency
+  createdAt DateTime @default(now())
 
-  @@unique([cartId, productId])
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cart    Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id]) // ← optional to match variantId?
+
+  @@index([tenantId])
+  @@index([cartId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model Order {
+  id        String      @id @default(cuid())
+  tenantId  String
+  userId    String
+  status    OrderStatus @default(pending)
+  total     Decimal     @db.Decimal(10, 2)
+  currency  Currency
+  addressId String?
+  note      String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  shortCode String?     @unique
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [tgId])
+  address  Address?        @relation(fields: [addressId], references: [id]) // ← optional to match addressId?
+  items    OrderItem[]
+  payments PaymentIntent[]
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id              String   @id @default(cuid())
+  tenantId        String
+  orderId         String
+  productId       String
+  variantId       String?
+  quantity        Int      @default(1)
+  unitPrice       Decimal  @db.Decimal(10, 2)
+  currency        Currency
+  titleSnapshot   String?
+  variantSnapshot String?
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id]) // ← optional to match variantId?
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+/// Wishlist / likes
+model Favorite {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [tgId])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([tenantId, userId, productId])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([productId])
+}
+
+/// ===== Payments & Webhooks (per order) =====
+
+model PaymentIntent {
+  id          String          @id @default(cuid())
+  tenantId    String
+  orderId     String
+  provider    PaymentProvider
+  providerRef String?
+  amount      Decimal         @db.Decimal(10, 2)
+  currency    Currency
+  status      PaymentStatus   @default(requires_payment)
+  meta        Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@index([provider, providerRef])
+}
+
+model WebhookEvent {
+  id         String           @id @default(cuid())
+  tenantId   String
+  provider   PaymentProvider?
+  type       WebhookType
+  payload    Json
+  receivedAt DateTime         @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([type])
+  @@index([receivedAt])
+}
+
+/// ===== Plans & Billing for Tenants =====
+
+model Plan {
+  id        String       @id @default(cuid())
+  name      String
+  price     Decimal      @db.Decimal(10, 2)
+  currency  Currency
+  interval  PlanInterval
+  active    Boolean      @default(true)
+  features  Json?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  subscriptions TenantSubscription[]
+}
+
+model TenantSubscription {
+  id          String             @id @default(cuid())
+  tenantId    String
+  planId      String
+  status      SubscriptionStatus @default(active)
+  startAt     DateTime
+  endAt       DateTime?
+  trialEndsAt DateTime?
+  meta        Json?
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan     Plan            @relation(fields: [planId], references: [id])
+  invoices TenantInvoice[]
+
+  @@index([tenantId])
+  @@index([planId])
+  @@index([status])
+}
+
+model TenantInvoice {
+  id             String    @id @default(cuid())
+  tenantId       String
+  subscriptionId String
+  number         String    @unique
+  amountDue      Decimal   @db.Decimal(10, 2)
+  currency       Currency
+  issuedAt       DateTime  @default(now())
+  dueAt          DateTime?
+  paidAt         DateTime?
+  meta           Json?
+
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  payments     TenantPayment[]
+
+  @@index([tenantId])
+  @@index([subscriptionId])
+  @@index([issuedAt])
+}
+
+model TenantPayment {
+  id          String          @id @default(cuid())
+  tenantId    String
+  invoiceId   String? // optional FK => optional relation
+  provider    PaymentProvider
+  providerRef String?
+  amount      Decimal         @db.Decimal(10, 2)
+  currency    Currency
+  status      PaymentStatus   @default(processing)
+  createdAt   DateTime        @default(now())
+  meta        Json?
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice TenantInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@index([provider, providerRef])
 }
