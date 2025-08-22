@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 const allowedHosts = [
   'localhost',
   '127.0.0.1',
-  'a2d32fb22abd.ngrok-free.app',  //front
+  'aa14912471bb.ngrok-free.app',  //front
 ];
 
 export default defineConfig({

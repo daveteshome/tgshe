@@ -1,7 +1,7 @@
 // apps/webapp/src/routes/Categories.tsx
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { apiGet } from '../lib/api'
+import { api } from '../lib/api/index'
 
 type Category = { id:string; title:string }
 
@@ -10,7 +10,7 @@ export default function Categories(){
   const [err, setErr] = React.useState<string>('')
 
   React.useEffect(()=>{
-    apiGet<Category[]>('/categories')
+    api<Category[]>('/categories')
       .then(setCats)
       .catch(e=> setErr(String(e?.message||'Failed to load categories')))
   },[])
