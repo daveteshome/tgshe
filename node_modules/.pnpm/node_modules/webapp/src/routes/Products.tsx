@@ -1,7 +1,7 @@
 // apps/webapp/src/routes/Products.tsx
 import React from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { apiGet } from '../lib/api'
+import { api } from '../lib/api/index'
 
 type Product = { id:string; title:string; price:number; currency:string; stock:number; photoUrl?:string|null }
 
@@ -18,7 +18,7 @@ export default function Products(){
   React.useEffect(()=>{
     if (!categoryId) return
     setData(null)
-    apiGet<PageResult>(`/products?category=${encodeURIComponent(categoryId)}&page=${page}&perPage=12`)
+    api<PageResult>(`/products?category=${encodeURIComponent(categoryId)}&page=${page}&perPage=12`)
       .then(setData)
       .catch(e=> setErr(String(e?.message||'Failed to load products')))
   },[categoryId, page])
