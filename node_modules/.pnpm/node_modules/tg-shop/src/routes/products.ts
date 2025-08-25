@@ -1,83 +1,75 @@
+// ...imports...
 import { Router } from "express";
+import { Readable } from "node:stream";
 import { db } from "../lib/db";
-import { requireTenant } from "./_helpers";
-
+import { publicImageUrl } from "../lib/r2";   // <-- you already have this
 export const productsRouter = Router();
 
-productsRouter.get("/", async (req, res, next) => {
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
+
+productsRouter.get('/:id/image', async (req, res, next) => {
+  const id = req.params.id;
   try {
-    const tenantId = requireTenant(req);
-    const q = (req.query.q as string) || "";
-    const sort = (req.query.sort as string) || "newest"; // newest|price_asc|price_desc
-    const limit = Math.min(parseInt((req.query.limit as string) || "24", 10), 48);
-    const cursor = (req.query.cursor as string) || undefined;
-
-    const orderBy =
-      sort === "price_asc" ? [{ price: "asc" as const }, { id: "asc" as const }] :
-      sort === "price_desc" ? [{ price: "desc" as const }, { id: "asc" as const }] :
-      [{ createdAt: "desc" as const }, { id: "asc" as const }];
-
-    const where = {
-      tenantId,
-      active: true,
-      ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
-    };
-
-    const items = await db.product.findMany({
-      where,
-      select: {
-        id: true, title: true, price: true, currency: true, stock: true, active: true,
-        images: { take: 1, orderBy: { position: "asc" as const }, select: { url: true } },
-      },
-      orderBy,
-      take: limit + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    const img = await db.productImage.findFirst({
+      where: { productId: id },
+      orderBy: { position: 'asc' },
+      select: { tgFileId: true, imageId: true, url: true },
     });
 
-    const hasNext = items.length > limit;
-    if (hasNext) items.pop();
+    if (!img) {
+      console.warn("[img:route] no image row", { productId: id });
+      return res.status(404).send('No image');
+    }
 
-    const data = items.map(p => ({
-      id: p.id,
-      title: p.title,
-      price: p.price.toString(),
-      currency: p.currency,
-      stock: p.stock,
-      active: p.active,
-      thumbUrl: p.images[0]?.url ?? null,
-    }));
+    // 1) Telegram file_id → proxy it
+    if (img.tgFileId) {
+      console.log("[img:route] serve TG file_id", { productId: id });
+      const gf = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(img.tgFileId)}`);
+      const j: any = await gf.json().catch(async () => ({ ok: false, text: await gf.text() }));
+      if (!j?.ok || !j?.result?.file_path) {
+        console.error("[img:route] TG getFile failed", { status: gf.status, body: j });
+        return res.status(502).send('TG getFile failed');
+      }
+      const filePath: string = j.result.file_path;
+      const f = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+      if (!f.ok) {
+        const t = await f.text();
+        console.error("[img:route] TG file fetch failed", { status: f.status, body: t.slice(0, 200) });
+        return res.status(502).send('TG file fetch failed');
+      }
 
-    res.json({ items: data, nextCursor: hasNext ? items[items.length - 1].id : null });
-  } catch (e) { next(e); }
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.setHeader('Content-Type', f.headers.get('content-type') ?? 'image/jpeg');
+      const body: any = f.body;
+      if (body && typeof (Readable as any).fromWeb === 'function') {
+        return (Readable as any).fromWeb(body).pipe(res);
+      }
+      const buf = Buffer.from(await f.arrayBuffer());
+      res.setHeader('Content-Length', String(buf.length));
+      return res.end(buf);
+    }
+
+    // 2) R2 image → redirect to public URL
+    if (img.imageId) {
+      const r2Url = publicImageUrl(img.imageId, 'jpg'); // we uploaded as orig.jpg (jpeg)
+      console.log("[img:route] redirect to R2", { productId: id, r2Url });
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return res.redirect(302, r2Url);
+    }
+
+    // 3) Legacy URL
+    if (img.url) {
+      console.log("[img:route] redirect to legacy URL", { productId: id, url: img.url });
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.redirect(302, img.url);
+    }
+
+    console.warn("[img:route] row had no usable ref", { productId: id, img });
+    return res.status(404).send('No image');
+  } catch (e) {
+    console.error("[img:route] error", { productId: id, err: (e as any)?.message });
+    next(e);
+  }
 });
 
-productsRouter.get("/:id", async (req, res, next) => {
-  try {
-    const tenantId = requireTenant(req);
-    const id = req.params.id;
-
-    const p = await db.product.findFirst({
-      where: { id, tenantId, active: true },
-      include: {
-        images: { orderBy: { position: "asc" } },
-        variants: { orderBy: { name: "asc" } },
-      },
-    });
-    if (!p) return res.status(404).json({ error: "Not found", code: "PRODUCT_NOT_FOUND" });
-
-    res.json({
-      id: p.id,
-      title: p.title,
-      description: p.description,
-      sku: p.sku,
-      price: p.price.toString(),
-      currency: p.currency,
-      stock: p.stock,
-      active: p.active,
-      images: p.images.map(i => ({ url: i.url, alt: i.alt })),
-      variants: p.variants.map(v => ({
-        id: v.id, name: v.name, priceDiff: v.priceDiff?.toString() ?? null, stock: v.stock, sku: v.sku ?? null
-      })),
-    });
-  } catch (e) { next(e); }
-});
+export default productsRouter;

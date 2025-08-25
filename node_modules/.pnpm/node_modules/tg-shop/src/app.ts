@@ -22,6 +22,7 @@ import { api } from './api/routes';
 import { resolveTenant } from './middlewares/resolveTenant';
 import { tenantApi } from './routes/tenantApi';
 import { telegramAuth } from './api/telegramAuth'; // must set req.user = { tgId }
+import productsRouter from './routes/products';
 
 export function createApp() {
   const app = express();
@@ -36,7 +37,7 @@ export function createApp() {
   app.use(cors({
     origin: [
       ENV.WEBAPP_URL,
-      'https://a2d32fb22abd.ngrok-free.app', //front
+      'https://ca10e4682a96.ngrok-free.app', //front
       'https://web.telegram.org',
       'https://oauth.telegram.org',
       /\.t\.me$/,
@@ -72,6 +73,7 @@ export function createApp() {
   // Order matters: limiter above applies to this route because it shares the '/api' prefix.
   app.use('/api/t/:slug', resolveTenant, telegramAuth, tenantApi);
   app.use('/api', api);
+  api.use('/api/products', productsRouter);
 
   // ----- Telegram Bot -----
   bot.use(ensureUser());

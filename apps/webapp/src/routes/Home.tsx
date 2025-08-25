@@ -12,10 +12,10 @@ import { useAsync } from "../lib/hooks/useAsync";
 import type { Category, PagedProducts, Product } from "../lib/types";
 import { DEFAULT_PER_PAGE } from "../lib/constants";
 import { refreshCartCount } from "../lib/store";
-import DebugPanel from "../components/common/DebugPanel";
+//import DebugPanel from "../components/common/DebugPanel";
 import RunInsideTelegramNotice from "../components/common/RunInsideTelegramNotice";
 import { ready, getInitData } from "../lib/telegram";
-import DebugAuth from '../components/common/DebugAuth';
+//import DebugAuth from '../components/common/DebugAuth';
 
 export default function Home() {
   
@@ -56,11 +56,11 @@ export default function Home() {
     await addItem(p.id, 1);
     await refreshCartCount();
   }
-
+    //put it inside retun below div for debug
+      //<DebugAuth />
+      //<DebugPanel />
   return (
     <div>
-      <DebugAuth />
-      <DebugPanel />
       <RunInsideTelegramNotice show={outside} />
 
       <TopBar title="Products" />

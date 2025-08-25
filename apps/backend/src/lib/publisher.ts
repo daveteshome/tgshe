@@ -1,9 +1,9 @@
-// apps/backend/src/lib/publisher.ts
 import { Markup, Telegraf } from 'telegraf';
 import { db } from './db';
 import { ENV } from '../config/env';
 import { money } from './money';
 import type { OrderStatus, Currency } from '@prisma/client';
+import { publicImageUrl } from '../lib/r2';
 
 function esc(s: any) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -13,13 +13,6 @@ function toNum(v: any) {
 }
 function asCurrency(c: any): string {
   return String(c as Currency);
-}
-
-function chooseImageInput(url?: string | null) {
-  if (!url) return null;
-  if (url.startsWith('tg:file_id:')) return url.replace(/^tg:file_id:/, '');
-  if (/^https?:\/\//i.test(url)) return { url };
-  return null;
 }
 
 function ensureTelegram(botOrCtx: any) {
@@ -45,15 +38,24 @@ export const Publisher = {
     const p = await db.product.findUnique({
       where: { id: productId },
       include: {
-        images: { orderBy: { position: 'asc' } },
+        images: {
+          orderBy: { position: 'asc' },
+          take: 1,
+          select: { tgFileId: true, imageId: true, url: true },
+        },
       },
     });
     if (!p) throw new Error('Product not found');
 
     const price = toNum(p.price);
     const cur = asCurrency(p.currency);
-    const imgUrl = p.images[0]?.url || null;
-    const input = chooseImageInput(imgUrl);
+
+    // Build Telegram photo input (prefer tgFileId, then R2 URL, then legacy URL)
+    const im = p.images?.[0];
+    let input: any = null;
+    if (im?.tgFileId) input = im.tgFileId; // string file_id
+    else if (im?.imageId) input = { url: publicImageUrl(im.imageId, 'jpg') };
+    else if (im?.url) input = { url: im.url };
 
     const caption =
       `<b>${esc(p.title)}</b>\n` +
@@ -84,16 +86,12 @@ export const Publisher = {
     }
   },
 
-  /**
-   * "Upsert" product post — without persisted message ids we just post a fresh message.
-   */
+  /** "Upsert" product post — without persisted message ids we just post a fresh message. */
   async upsertProductPost(botOrCtx: Telegraf | any, productId: string) {
     return this.postProduct(botOrCtx, productId);
   },
 
-  /**
-   * Notify group about a new order.
-   */
+  /** Notify group about a new order. */
   async notifyOrderNew(botOrCtx: Telegraf | any, orderId: string) {
     const telegram = ensureTelegram(botOrCtx);
     const chatId = ENV.GROUP_CHAT_ID;
@@ -142,9 +140,7 @@ export const Publisher = {
     });
   },
 
-  /**
-   * Notify group that an order changed status.
-   */
+  /** Notify group that an order changed status. */
   async notifyOrderStatus(botOrCtx: Telegraf | any, orderId: string, from: OrderStatus, to: OrderStatus) {
     const telegram = ensureTelegram(botOrCtx);
     const chatId = ENV.GROUP_CHAT_ID;
@@ -159,7 +155,7 @@ export const Publisher = {
     const msg =
       `🔔 Order #${esc(o.id.slice(0, 6))} ` +
       `for ${buyerLink(o.userId, o.user?.username, o.user?.name)} ` +
-      `changed: <b>${esc(from)} → ${esc(to)}</b>`;
+      `changed: <b>${esc(from)} → <span class="emoji"> </span>${esc(to)}</b>`;
 
     await telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
   },

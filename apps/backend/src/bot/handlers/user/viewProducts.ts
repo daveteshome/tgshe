@@ -2,6 +2,10 @@ import { Markup } from 'telegraf';
 import { CatalogService } from '../../../services/catalog.service';
 import { money } from '../../../lib/money';
 import { db } from '../../../lib/db';
+import { callback } from 'telegraf/typings/button';
+import { sendProductPhoto } from "../../../lib/photos";
+import { resolveProductPhotoInput } from '../../../services/image.resolve';
+
 
 const PLACEHOLDER = 'https://placehold.co/800x500/png?text=Product';
 const PER_PAGE = 3;
@@ -56,27 +60,28 @@ export const registerViewProducts = (bot: any) => {
     const cats = await CatalogService.listCategories();
     if (!cats.length) return ctx.reply('No categories yet.');
 
-    const rows = cats.map((c: { id: string; name: string }) => [
-      Markup.button.callback(c.name, `CAT_${c.id}_P_1`)
+    const rows = cats.map((c: { id: string; title: string }) => [
+      Markup.button.callback(c.title, `CAT_${c.id}_P_1`)
     ]);
     await ctx.reply('Choose a category:', Markup.inlineKeyboard(rows));
   });
 
   // Open a single product from inline button in DMs / chats
-  bot.action(/VIEW_ITEM_(.+)/, async (ctx: any) => {
+bot.action(/VIEW_ITEM_(.+)/, async (ctx: any) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
     const p = await db.product.findUnique({ where: { id: productId } });
     if (!p) return ctx.reply('Item not found.');
 
+    const priceNum =
+      typeof (p as any).price?.toNumber === 'function'
+        ? (p as any).price.toNumber()
+        : Number(p.price);
+
     const caption =
       `*${p.title}*\n` +
       (p.description ? `${p.description}\n` : '') +
-      `Price: ${money(
-        // Product.price is Prisma.Decimal now
-        typeof (p as any).price?.toNumber === 'function' ? (p as any).price.toNumber() : Number(p.price),
-        String(p.currency)
-      )}\n` +
+      `Price: ${money(priceNum, String(p.currency))}\n` +
       `Stock: ${p.stock}`;
 
     const kb = Markup.inlineKeyboard([
@@ -88,54 +93,81 @@ export const registerViewProducts = (bot: any) => {
     ]);
 
     try {
-      const firstImg = (p as any).images?.[0]?.url as string | undefined;
-      if (firstImg && firstImg.startsWith('http')) {
-        await ctx.replyWithPhoto({ url: firstImg }, {
+      const photoInput = await resolveProductPhotoInput(p.id);
+      if (photoInput) {
+        await ctx.replyWithPhoto(photoInput as any, {
           caption,
           parse_mode: 'Markdown',
           reply_markup: kb.reply_markup
         });
-      } else {
-        await ctx.reply(caption, { parse_mode: 'Markdown', reply_markup: kb.reply_markup });
+        return;
       }
     } catch {
-      await ctx.reply(caption, { parse_mode: 'Markdown', reply_markup: kb.reply_markup });
+      // fallthrough to text
     }
+
+    await ctx.reply(caption, { parse_mode: 'Markdown', reply_markup: kb.reply_markup });
   });
 
-  // Unified category handler: supports both "CAT_<id>" and "CAT_<id>_P_<page>"
+
+
+// small helper: fetch raw first image ref from DB (returns tg:file_id:* or https URL)
+async function rawFirstImageRef(productId: string): Promise<string | null> {
+  const img = await db.productImage.findFirst({
+    where: { productId },
+    orderBy: { position: "asc" },
+    select: { url: true },
+  });
+  return img?.url ?? null;
+}
+
+// Simple Markdown escaper
+function md(text: string) {
+  return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
+// Unified category handler: supports both "CAT_<id>" and "CAT_<id>_P_<page>"
 bot.action(/^CAT_(.+)$/, async (ctx: any) => {
-    await ctx.answerCbQuery();
+  await ctx.answerCbQuery();
 
-    const raw = ctx.match[1]; // "<catId>" or "<catId>_P_<page>"
-    const SPLIT = '_P_';
-    let categoryId = raw;
-    let page = 1;
+  const raw = ctx.match[1]; // "<catId>" or "<catId>_P_<page>"
+  const SPLIT = "_P_";
+  let categoryId = raw;
+  let page = 1;
 
-    const idx = raw.lastIndexOf(SPLIT);
-    if (idx > -1) {
-      categoryId = raw.slice(0, idx);
-      const pNum = parseInt(raw.slice(idx + SPLIT.length), 10);
-      if (Number.isFinite(pNum) && pNum > 0) page = pNum;
-    }
+  const idx = raw.lastIndexOf(SPLIT);
+  if (idx > -1) {
+    categoryId = raw.slice(0, idx);
+    const pNum = parseInt(raw.slice(idx + SPLIT.length), 10);
+    if (Number.isFinite(pNum) && pNum > 0) page = pNum;
+  }
 
-    // Best-effort: remove the tapped message (keeps chat tidy)
-    try { await ctx.deleteMessage(); } catch {}
+  try { await ctx.deleteMessage(); } catch {}
 
-    const { items, pages, total } = await CatalogService.listProductsByCategoryPaged(categoryId, page, PER_PAGE);
+  const { items, pages, total } = await CatalogService.listProductsByCategoryPaged(
+    categoryId, page, PER_PAGE
+  );
 
-    if (!total) {
-      return ctx.reply('No products in this category yet.');
-    }
+  if (!total) {
+    return ctx.reply("No products in this category yet.");
+  }
 
-    // Only send THIS page
-    for (const p of items) {
-      await sendProduct(ctx, p);
-    }
+  for (const p of items) {
+    // Prefer the raw DB ref for the bot (so Telegram can use file_id)
+    const imgRef = await rawFirstImageRef(p.id); // may be "tg:file_id:..." or "https://..."
+    const caption =
+      `*${md(p.title)}*\n` +
+      `${md(p.currency)} ${Number(p.price).toFixed(2)} • Stock: ${p.stock}`;
 
-    // Single pager footer
-    await ctx.reply(`Showing ${items.length} of ${total}`, pagerKb(categoryId, page, pages));
-  });
+    await sendProductPhoto(ctx, imgRef, {
+      caption,
+      parse_mode: "Markdown",
+      // reply_markup: productKb(p) // if you have a per-product keyboard
+    });
+  }
+
+  await ctx.reply(`Showing ${items.length} of ${total}`, pagerKb(categoryId, page, pages));
+});
 
   // No-op label tap
   bot.action('NOP', async (ctx: any) => ctx.answerCbQuery());

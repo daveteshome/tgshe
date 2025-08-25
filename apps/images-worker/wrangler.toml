@@ -1,0 +1,6 @@
+name = "tg-shop-store"
+main = "src/worker.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+R2_PUBLIC_HOST = "pub-5b19ff19418b494a9d928fe537d49969.r2.dev/tg-shop-store"

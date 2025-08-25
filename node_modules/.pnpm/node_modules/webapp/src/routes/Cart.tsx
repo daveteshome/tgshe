@@ -1,97 +1,93 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { TopBar } from "../components/layout/TopBar";
-import { Loader } from "../components/common/Loader";
-import { ErrorView } from "../components/common/ErrorView";
-import { CartItemRow } from "../components/cart/CartItemRow";
-import { CartSummary } from "../components/cart/CartSummary";
-import { AddressForm } from "../components/profile/AddressForm";
-import { useAsync } from "../lib/hooks/useAsync";
-import { getCart, patchItem, removeItem } from "../lib/api/cart";
-import { checkout } from "../lib/api/orders";
-import { getProfile } from "../lib/api/profile";
-import type { Cart, Profile } from "../lib/types";
-import { refreshCartCount } from "../lib/store";
+import React from "react";
+import { api } from "../lib/api";
+
+type CartItem = {
+  id: string;
+  title?: string;
+  qty?: number;
+  price?: number;
+  currency?: string;
+  photoUrl?: string | null;
+};
+type CartData = { items?: CartItem[]; total?: number; currency?: string };
 
 export default function Cart() {
-  const cartQ = useAsync<Cart>(() => getCart(), []);
-  const [reloadKey, setReloadKey] = useState(0);
-  useEffect(() => { /* trigger re-render on reloadKey */ }, [reloadKey]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string>("");
+  const [data, setData] = React.useState<CartData | null>(null);
 
-  const items = cartQ.data?.items || [];
-  const total = useMemo(() => items.reduce((s, it) => s + it.product.price * it.qty, 0), [items]);
-  const currency = items[0]?.product.currency || "USD";
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const d = await api<CartData>("/cart");
+        if (!alive) return;
+        setData(d || { items: [] });
+        setError("");
+      } catch (e: any) {
+        const msg = normalizeError(String(e?.message || e));
+        if (!alive) return;
+        setError(msg);
+        setData({ items: [] });
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
-  const profQ = useAsync<Profile>(() => getProfile(), []);
-  const [city, setCity] = useState("");
-  const [place, setPlace] = useState("");
-  const [specialReference, setSpecialReference] = useState("");
+  if (loading) return <div style={{ padding: 16 }}>Loading cart…</div>;
+  if (error)   return <div style={{ padding: 16, color: "#900" }}>{error}</div>;
 
-  useEffect(() => {
-    const p = profQ.data;
-    if (p) {
-      setCity(p.city || "");
-      setPlace(p.place || "");
-      setSpecialReference(p.specialReference || "");
-    }
-  }, [profQ.data]);
+  const items = data?.items ?? [];
+  if (!items.length) return <div style={{ padding: 16 }}>Your cart is empty.</div>;
 
-  function shippingString() {
-    return [city, place, specialReference].filter(Boolean).join(", ");
-  }
-
-  async function onCheckout() {
-    const ship = shippingString();
-    if (!ship || ship.trim().length < 4) return alert("Please enter a shipping address");
-    const order = await checkout(ship);
-    await refreshCartCount();
-    alert(`Order #${order.id.slice(0, 6)} placed!`);
-    setReloadKey((k) => k + 1);
-  }
-
-  async function inc(itemId: string) {
-    await patchItem(itemId, +1);
-    await refreshCartCount();
-    setReloadKey((k) => k + 1);
-  }
-
-  async function dec(itemId: string) {
-    await patchItem(itemId, -1);
-    await refreshCartCount();
-    setReloadKey((k) => k + 1);
-  }
-
-  async function remove(itemId: string) {
-    await removeItem(itemId);
-    await refreshCartCount();
-    setReloadKey((k) => k + 1);
-  }
+  const total = safeNumber(data?.total);
+  const currency = data?.currency || items[0]?.currency || "";
 
   return (
-    <div>
-      <TopBar title="Cart" />
-      {cartQ.loading ? <Loader /> : <ErrorView error={cartQ.error} />}
+    <div style={{ padding: 16, display: "grid", gap: 12 }}>
+      {items.map((it) => (
+        <article key={it.id} style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden", display: "grid", gridTemplateColumns: "72px 1fr" }}>
+          <div style={{ width: 72, height: 72, background: "#fafafa", display: "grid", placeItems: "center" }}>
+            {it.photoUrl ? (
+              <img src={it.photoUrl} alt={it.title || "Item"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              <span style={{ color: "#999", fontSize: 12 }}>No image</span>
+            )}
+          </div>
+          <div style={{ padding: 10 }}>
+            <div style={{ fontWeight: 600 }}>{it.title || "Item"}</div>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              {it.currency || currency} {formatMoney(safeNumber(it.price))}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>Qty: {safeNumber(it.qty, 1)}</div>
+          </div>
+        </article>
+      ))}
 
-      <div>
-        {items.map((it) => (
-          <CartItemRow
-            key={it.id}
-            item={it}
-            onInc={() => inc(it.id)}
-            onDec={() => dec(it.id)}
-            onRemove={() => remove(it.id)}
-          />
-        ))}
-        {items.length === 0 && <div style={{ opacity: 0.7 }}>Your cart is empty.</div>}
+      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #eee", display: "flex", justifyContent: "space-between" }}>
+        <strong>Total</strong>
+        <strong>{currency} {formatMoney(total)}</strong>
       </div>
-
-      <CartSummary total={total} currency={currency} onCheckout={onCheckout}>
-        <AddressForm
-          city={city}
-          place={place}
-          specialReference={specialReference}
-          onChange={(f) => { setCity(f.city); setPlace(f.place); setSpecialReference(f.specialReference); }}
-        />
-      </CartSummary>
     </div>
   );
+}
+
+function normalizeError(msg: string) {
+  const insideTG = !!(window as any)?.Telegram?.WebApp;
+  if (/401|unauthorized|authorization|tma/i.test(msg)) {
+    return insideTG
+      ? "Could not verify your Telegram session. Try reopening the shop from the bot."
+      : "Please open this shop inside Telegram to view your cart.";
+  }
+  if (/fetch failed|network/i.test(msg)) return "Network error while loading cart. Check your connection.";
+  return msg || "Failed to load cart.";
+}
+function safeNumber(n: any, fallback = 0) {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : fallback;
+}
+function formatMoney(n: number) {
+  return n.toFixed(2);
 }

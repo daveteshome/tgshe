@@ -16,6 +16,13 @@ export const ENV = {
   ADMIN_GROUP_CHAT_ID: (process.env.ADMIN_GROUP_CHAT_ID || ''),
   NODE_ENV: process.env.NODE_ENV || 'development',
   DATABASE_URL: required('DATABASE_URL'),
+  R2_PUBLIC_BASE: required('R2_PUBLIC_BASE'),
+
+  R2_ENDPOINT: required('R2_ENDPOINT'),
+  R2_BUCKET: required('R2_BUCKET'),
+  R2_SECRET_ACCESS_KEY: required('R2_SECRET_ACCESS_KEY'),
+  R2_ACCESS_KEY_ID: required('R2_ACCESS_KEY_ID'),
+  R2_ACCOUNT_ID: required('R2_ACCOUNT_ID'),
 
   // NEW
   DEFAULT_TENANT_SLUG: process.env.DEFAULT_TENANT_SLUG ?? 'demo',

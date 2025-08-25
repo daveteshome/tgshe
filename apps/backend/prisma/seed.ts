@@ -29,7 +29,6 @@ async function main() {
   // 3) Default address for the test user (scoped to tenant)
   await db.address.upsert({
     where: {
-      // @@unique([tenantId, userId, label])
       tenantId_userId_label: { tenantId: tenant.id, userId: user.tgId, label: 'Home' },
     },
     update: { isDefault: true },
@@ -45,7 +44,26 @@ async function main() {
     },
   });
 
-  // 4) Catalog (ETB), with images and simple variants
+  // 4) Categories (unique per tenant by slug)
+  const apparel = await db.category.upsert({
+    where: { tenantId_slug: { tenantId: tenant.id, slug: 'apparel' } },
+    update: {},
+    create: { tenantId: tenant.id, title: 'Apparel', slug: 'apparel', position: 1, active: true },
+  });
+
+  const accessories = await db.category.upsert({
+    where: { tenantId_slug: { tenantId: tenant.id, slug: 'accessories' } },
+    update: {},
+    create: { tenantId: tenant.id, title: 'Accessories', slug: 'accessories', position: 2, active: true },
+  });
+
+  const drinkware = await db.category.upsert({
+    where: { tenantId_slug: { tenantId: tenant.id, slug: 'drinkware' } },
+    update: {},
+    create: { tenantId: tenant.id, title: 'Drinkware', slug: 'drinkware', position: 3, active: true },
+  });
+
+  // 5) Catalog (ETB), with images and simple variants — now connected to categories
   const p1 = await db.product.create({
     data: {
       tenantId: tenant.id,
@@ -56,6 +74,8 @@ async function main() {
       currency: $Enums.Currency.ETB,
       stock: 50,
       active: true,
+      // 👇 connect to category
+      category: { connect: { id: apparel.id } },
       images: {
         create: [
           { tenantId: tenant.id, url: 'https://picsum.photos/seed/t1/800/800', alt: 'Front' },
@@ -81,6 +101,8 @@ async function main() {
       currency: $Enums.Currency.ETB,
       stock: 25,
       active: true,
+      // 👇 connect to category
+      category: { connect: { id: accessories.id } },
       images: {
         create: [{ tenantId: tenant.id, url: 'https://picsum.photos/seed/w1/800/800', alt: 'Angle' }],
       },
@@ -97,13 +119,15 @@ async function main() {
       currency: $Enums.Currency.ETB,
       stock: 40,
       active: true,
+      // 👇 connect to category
+      category: { connect: { id: drinkware.id } },
       images: {
         create: [{ tenantId: tenant.id, url: 'https://picsum.photos/seed/b1/800/800', alt: 'Bottle' }],
       },
     },
   });
 
-  // 5) A ready-to-test cart (composite unique: tenantId_userId)
+  // 6) A ready-to-test cart (composite unique: tenantId_userId)
   const cart = await db.cart.upsert({
     where: { tenantId_userId: { tenantId: tenant.id, userId: user.tgId } },
     update: { updatedAt: new Date() },

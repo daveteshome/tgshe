@@ -76,6 +76,11 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // --- NEW: per-tenant Telegram config ---
+  botToken    String? // store the bot token for this tenant
+  botUsername String? // optional, e.g. @my_tenant_bot
+  postChatId  String? // where you post products (string to safely hold 64-bit chat IDs)
+
   // Back-relations for ALL tenant-scoped data
   addresses       Address[]
   productImages   ProductImage[]
@@ -90,6 +95,7 @@ model Tenant {
   invoices        TenantInvoice[]
   tenantPayments  TenantPayment[]
   products        Product[]
+  categories      Category[]
   carts           Cart[]
   orders          Order[]
 
@@ -140,6 +146,24 @@ model Address {
 }
 
 /// ===== Catalog =====
+// prisma/schema.prisma  (only the relevant parts)
+
+model Category {
+  id        String   @id @default(cuid())
+  tenantId  String
+  title     String
+  slug      String
+  position  Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([tenantId, slug], name: "tenantId_slug")
+  @@index([tenantId, active, position])
+}
 
 model Product {
   id          String   @id @default(cuid())
@@ -154,6 +178,10 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // ✅ NEW
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
   tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   images     ProductImage[]
   variants   ProductVariant[]
@@ -166,19 +194,41 @@ model Product {
   @@index([tenantId])
   @@index([active])
   @@index([title])
+  @@index([tenantId, categoryId]) // helpful for filtering by category
+}
+
+model Image {
+  id            String   @id @default(cuid())
+  sha256        String   @unique
+  bucketKeyBase String // e.g. "images/<sha256>"
+  width         Int
+  height        Int
+  mime          String
+  tenantId      String?
+  createdAt     DateTime @default(now())
+
+  // Back relation to ProductImage
+  productImages ProductImage[]
+
+  @@index([tenantId])
 }
 
 model ProductImage {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   tenantId  String
   productId String
-  url       String
+  imageId   String? // link to Image.id (R2/Cloudflare)
+  url       String? // legacy/external
+  tgFileId  String? // keep Telegram file_id if you like
   alt       String?
-  position  Int      @default(0)
+  position  Int     @default(0)
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  image   Image?  @relation(fields: [imageId], references: [id])
 
   @@index([tenantId])
   @@index([productId])
