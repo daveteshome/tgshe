@@ -37,7 +37,7 @@ export function createApp() {
   app.use(cors({
     origin: [
       ENV.WEBAPP_URL,
-      'https://ca10e4682a96.ngrok-free.app', //front
+      'https://defcd48b9e3d.ngrok-free.app', //front
       'https://web.telegram.org',
       'https://oauth.telegram.org',
       /\.t\.me$/,

@@ -7,6 +7,7 @@ import Orders from "./routes/Orders";
 import OrderDetail from "./routes/OrderDetail";
 import Categories from "./routes/Categories";
 import Products from "./routes/Products";
+import HomeTab from "./pages/HomeTab";
 
 import ErrorBoundary from "./components/common/ErrorBoundary";
 
@@ -59,10 +60,7 @@ export default function App() {
           <Route path="/categories" element={<Categories />} />
           <Route path="/c/:categoryId" element={<Products />} />
 
-          <Route
-            path="/orders"
-            element={<Orders onOpen={(id) => navigate(`/orders/${id}`)} />}
-          />
+          <Route path="/orders" element={<Orders onOpen={(id) => navigate(`/orders/${id}`)} />}/>
           <Route path="/orders/:id" element={<OrderDetailRoute />} />
 
           <Route path="/cart" element={<Cart />} />

@@ -72,8 +72,6 @@ apps/
    ├─ tsconfig.node.json
    └─ vite.config.ts
 
-
-
 # --- Write a clean v3 config to the path you want ---
 $cfg = @"
 version: 3

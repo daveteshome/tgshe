@@ -86,16 +86,6 @@ api.get("/_debug/tenant-cats", async (_req, res) => {
   res.json({ tenantId, count });
 });
 
-api.get('/categories', async (_req, res, next) => {
-  try {
-    const cats = await CatalogService.listCategories();
-    // cats already in { id, title } shape + includes “All”
-    res.json(cats);
-  } catch (e) {
-    next(e);
-  }
-});
-
 
 // -------- AUTH GUARD --------
 api.use(telegramAuth);
