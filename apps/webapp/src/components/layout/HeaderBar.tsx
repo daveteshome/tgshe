@@ -1,27 +1,14 @@
 // apps/webapp/src/components/layout/HeaderBar.tsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../../lib/api";
+import { useCartCount } from "../../lib/store";
 
 type Props = { onOpenMenu: () => void; title?: string };
 
 export default function HeaderBar({ onOpenMenu, title = "TG Shop" }: Props) {
   const navigate = useNavigate();
-  const [count, setCount] = React.useState<number>(0);
-
-  React.useEffect(() => {
-    refreshCount().catch(() => setCount(0));
-    const onChanged = () => refreshCount().catch(() => setCount(0));
-    window.addEventListener("cart:changed", onChanged);
-    return () => window.removeEventListener("cart:changed", onChanged);
-  }, []);
-
-  async function refreshCount() {
-    const cart = await api<{ items: Array<{ id: string; qty?: number }> }>("/cart").catch(() => null);
-    const n = cart?.items?.reduce((sum, it) => sum + (it.qty ?? 1), 0) ?? 0;
-    setCount(n);
-  }
-
+  const count = useCartCount();
+  
   return (
     <header
       style={{

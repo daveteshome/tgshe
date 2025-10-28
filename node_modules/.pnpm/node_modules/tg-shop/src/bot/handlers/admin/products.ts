@@ -57,11 +57,9 @@ async function upsertPrimaryImageForProduct(productId: string, draft: Wizard['dr
 
   // remove all current images for that product (we only keep 1 primary here)
   await db.productImage.deleteMany({ where: { productId } }).catch(() => {});
-  console.log("[img] cleared product images", { productId });
 
   if (draft.photoFileId) {
     // Telegram upload → download → R2 → store imageId + keep tgFileId
-    console.log("[img] source: telegram file_id");
     const { bytes, mime } = await downloadFileByIdForTenant(draft.photoFileId, tenantId);
     const img = await upsertImageFromBytes(bytes, mime || "image/jpeg", tenantId);
     await db.productImage.create({
@@ -73,13 +71,11 @@ async function upsertPrimaryImageForProduct(productId: string, draft: Wizard['dr
         position: 0,
       },
     });
-    console.log("[img] saved to R2 (telegram)", { productId, imageId: img.id });
     return;
   }
 
   if (draft.photoUrl) {
     // External URL → fetch → R2 (preferred). If fetch fails, fallback to storing the URL.
-    console.log("[img] source: external url", { url: draft.photoUrl });
     try {
       const resp = await fetch(draft.photoUrl);
       if (!resp.ok) throw new Error(`fetch ${resp.status}`);
@@ -94,7 +90,6 @@ async function upsertPrimaryImageForProduct(productId: string, draft: Wizard['dr
           position: 0,
         },
       });
-      console.log("[img] saved to R2 (url)", { productId, imageId: img.id });
     } catch (e: any) {
       // legacy fallback
       await db.productImage.create({

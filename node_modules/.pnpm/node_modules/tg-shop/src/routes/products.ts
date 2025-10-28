@@ -23,7 +23,6 @@ productsRouter.get('/:id/image', async (req, res, next) => {
 
     // 1) Telegram file_id → proxy it
     if (img.tgFileId) {
-      console.log("[img:route] serve TG file_id", { productId: id });
       const gf = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(img.tgFileId)}`);
       const j: any = await gf.json().catch(async () => ({ ok: false, text: await gf.text() }));
       if (!j?.ok || !j?.result?.file_path) {
@@ -52,14 +51,12 @@ productsRouter.get('/:id/image', async (req, res, next) => {
     // 2) R2 image → redirect to public URL
     if (img.imageId) {
       const r2Url = publicImageUrl(img.imageId, 'jpg'); // we uploaded as orig.jpg (jpeg)
-      console.log("[img:route] redirect to R2", { productId: id, r2Url });
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       return res.redirect(302, r2Url);
     }
 
     // 3) Legacy URL
     if (img.url) {
-      console.log("[img:route] redirect to legacy URL", { productId: id, url: img.url });
       res.setHeader('Cache-Control', 'public, max-age=3600');
       return res.redirect(302, img.url);
     }

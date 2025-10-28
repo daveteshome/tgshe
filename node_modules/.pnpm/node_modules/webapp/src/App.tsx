@@ -7,7 +7,6 @@ import Orders from "./routes/Orders";
 import OrderDetail from "./routes/OrderDetail";
 import Categories from "./routes/Categories";
 import Products from "./routes/Products";
-import HomeTab from "./pages/HomeTab";
 
 import ErrorBoundary from "./components/common/ErrorBoundary";
 

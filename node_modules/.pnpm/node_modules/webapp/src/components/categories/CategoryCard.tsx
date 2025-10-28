@@ -3,9 +3,8 @@ import React from "react";
 export type Category = {
   id: string;
   title: string;
-  // optional icon URL or emoji; both supported, both optional
-  iconUrl?: string | null;
-  emoji?: string | null;
+  iconUrl?: string | null; // optional
+  emoji?: string | null;   // optional
 };
 
 export function CategoryCard({
@@ -17,7 +16,6 @@ export function CategoryCard({
   active: boolean;
   onClick: (id: string) => void;
 }) {
-  // visible label (two-line clamp with ellipsis)
   return (
     <button
       onClick={() => onClick(c.id)}
@@ -40,34 +38,12 @@ export function CategoryCard({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  wrap: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 16,
-    padding: 10,
-    cursor: "pointer",
-  },
-  iconTile: {
-    width: 72,
-    height: 72,
-    borderRadius: 16,
-    background: "rgba(0,0,0,.04)",
-    display: "grid",
-    placeItems: "center",
-    overflow: "hidden",
-  },
+  wrap: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, borderRadius: 16, padding: 10, cursor: "pointer" },
+  iconTile: { width: 72, height: 72, borderRadius: 16, background: "rgba(0,0,0,.04)", display: "grid", placeItems: "center", overflow: "hidden" },
   iconImg: { width: "100%", height: "100%", objectFit: "cover" },
   iconEmoji: { fontSize: 30, lineHeight: "1", color: "var(--tg-theme-text-color, #111)" },
   title: {
-    width: 88,
-    textAlign: "center",
-    fontSize: 13,
-    color: "var(--tg-theme-text-color, #111)",   // ← makes sure it’s visible in dark/light
-    display: "-webkit-box",
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: "vertical",
-    overflow: "hidden",
+    width: 88, textAlign: "center", fontSize: 13, color: "var(--tg-theme-text-color, #111)",
+    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
   },
 };

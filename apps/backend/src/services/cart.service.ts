@@ -3,45 +3,59 @@ import { Prisma } from '@prisma/client';
 import { getTenantId } from './tenant.util';
 
 export const CartService = {
+  
   async list(userId: string) {
-    const tenantId = await getTenantId();
+  const tenantId = await getTenantId();
+  console.log('[CartService.list] tenantId=', tenantId, 'userId=', userId);
 
-    const cart = await db.cart.findUnique({
-      where: { tenantId_userId: { tenantId, userId } },
-      include: {
-        items: {
-          include: {
-            product: {
-              select: {
-                title: true,
-                images: { orderBy: { position: 'asc' }, take: 1, select: { url: true } },
+  const cart = await db.cart.findUnique({
+    where: { tenantId_userId: { tenantId, userId } },
+    include: {
+      items: {
+        include: {
+          product: {
+            select: {
+              title: true,
+              images: {
+                orderBy: { position: 'asc' },
+                take: 1,
+                select: { url: true },
               },
             },
-            variant: { select: { name: true } },
           },
+          variant: { select: { name: true } },
         },
       },
-    });
+    },
+  });
 
-    if (!cart) return null;
+  if (!cart) return null;
+
+  const items = cart.items.map((it) => {
+    const url = it.product.images[0]?.url ?? null;
+    console.log('[CartService.list] item', it.id, 'productId=', it.productId, 'imageUrl=', url);
 
     return {
-      id: cart.id,
-      userId,
-      items: cart.items.map((it) => ({
-        id: it.id,
-        productId: it.productId,
-        qty: it.quantity,
-        price:
-          typeof (it.unitPrice as any)?.toNumber === 'function'
-            ? (it.unitPrice as unknown as Prisma.Decimal).toNumber()
-            : Number(it.unitPrice),
-        currency: String(it.currency),
-        title: it.product.title,
-        imageUrl: it.product.images[0]?.url ?? null,
-      })),
+      id: it.id,
+      productId: it.productId,
+      qty: it.quantity,
+      price:
+        typeof (it.unitPrice as any)?.toNumber === 'function'
+          ? (it.unitPrice as unknown as Prisma.Decimal).toNumber()
+          : Number(it.unitPrice),
+      currency: String(it.currency),
+      title: it.product.title,
+      imageUrl: url,
     };
-  },
+  });
+
+  return {
+    id: cart.id,
+    userId,
+    items,
+  };
+}
+,
 
   async add(userId: string, productId: string, qty: number) {
     const tenantId = await getTenantId();
@@ -76,6 +90,7 @@ export const CartService = {
   },
 
   async inc(itemId: string) {
+    console.log('[API] PATCH /cart/items on inc...........................................')
     const it = await db.cartItem.findUnique({ where: { id: itemId } });
     if (!it) return null;
     return db.cartItem.update({ where: { id: itemId }, data: { quantity: it.quantity + 1 } });

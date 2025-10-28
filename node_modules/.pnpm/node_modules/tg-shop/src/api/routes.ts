@@ -122,21 +122,11 @@ api.get('/products', async (req, res) => {
       const photo = await firstImageWebUrl(it.id);             // ← prefers R2, then TG proxy, then legacy
       const apiImage = `/api/products/${it.id}/image`;         // ← backend proxy (good universal fallback)
       const normalized = { ...it, photoUrl: photo, apiImage };
-      console.log("[products:list] item", {
-        id: normalized.id,
-        title: normalized.title,
-        active: normalized.active,
-        photoUrl: normalized.photoUrl,
-        apiImage: normalized.apiImage,
-      });
       return normalized;
     })
   );
 
   const result = { ...data, items };
-  console.log("[products:list] summary", {
-    categoryId, page, perPage, items: items.length, total: data.total,
-  });
 
   res.json(result);
 });
@@ -145,8 +135,6 @@ api.get("/products/:id/image", async (req, res) => {
   const id = req.params.id;
 
   try {
-    console.log("[image:route] request", { productId: id });
-
     const p = await db.product.findFirst({
       where: { id, active: true },
       include: {
@@ -173,7 +161,6 @@ api.get("/products/:id/image", async (req, res) => {
     // 2) R2 image → fetch and stream (avoid redirect so we control headers)
     if (im.imageId) {
       const url = publicImageUrl(im.imageId, "jpg");
-      console.log("[image:route] r2 proxy", { productId: id, imageId: im.imageId, url });
 
       const r2 = await fetch(url);
       if (!r2.ok) {
@@ -197,7 +184,6 @@ api.get("/products/:id/image", async (req, res) => {
 
 
     if (im.url && /^https?:\/\//i.test(im.url)) {
-      console.log("[image:route] legacy redirect", { productId: id, url: im.url });
       res.setHeader("Cache-Control", "public, max-age=3600");
       return res.redirect(302, im.url);
     }
@@ -214,7 +200,6 @@ api.get("/products/:id/image", async (req, res) => {
         return res.status(500).send(`BOT_TOKEN missing for tenant ${slug ?? "(unknown)"}`);
       }
 
-      console.log("[image:route] telegram proxy begin", { productId: id, tgFileId: im.tgFileId });
       const meta = await fetch(
         `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(im.tgFileId)}`
       );
@@ -237,13 +222,11 @@ api.get("/products/:id/image", async (req, res) => {
 
       const body: any = tgResp.body;
       if (body && typeof (Readable as any).fromWeb === "function") {
-        console.log("[image:route] telegram stream (fromWeb)", { productId: id });
         return (Readable as any).fromWeb(body).pipe(res);
       }
 
       const buf = Buffer.from(await tgResp.arrayBuffer());
       res.setHeader("Content-Length", String(buf.length));
-      console.log("[image:route] telegram stream (buffer)", { productId: id, bytes: buf.length });
       return res.end(buf);
     }
 
@@ -255,8 +238,10 @@ api.get("/products/:id/image", async (req, res) => {
   }
 });
 
+import { getTenantId } from '../services/tenant.util';
 // ---------- Cart ----------
 api.get('/cart', async (req: any, res) => {
+  console.log('[API] GET /cart tenantId=', await getTenantId(), 'userId=', req.userId);
   const userId = req.userId!;
   const cart = await CartService.list(userId);
   res.json(cart || { id: null, userId, items: [] });
@@ -272,6 +257,7 @@ api.post('/cart/items', async (req: any, res) => {
 });
 
 api.patch('/cart/items/:id', async (req: any, res) => {
+  console.log('[API] PATCH /cart/items', req.params.id, 'tenantId=', await getTenantId(), 'userId=', req.userId);
   const itemId = String(req.params.id);
   const { qtyDelta } = req.body || {};
   if (!qtyDelta || !Number.isInteger(qtyDelta)) return res.status(400).json({ error: 'qtyDelta required (int)' });

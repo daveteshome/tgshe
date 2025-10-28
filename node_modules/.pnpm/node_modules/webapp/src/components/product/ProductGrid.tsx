@@ -1,9 +1,14 @@
-// apps/webapp/src/components/product/ProductGrid.tsx
 import React from "react";
 import type { Product } from "../../lib/types";
 import { ProductCard } from "./ProductCard";
 
-export function ProductGrid({ products, onAdd }: { products: Product[]; onAdd: (p: Product) => void }) {
+export function ProductGrid({
+  products,
+  onAdd, // (p) => Promise<void>
+}: {
+  products: Product[];
+  onAdd: (p: Product) => Promise<void>;
+}) {
   return (
     <div style={grid}>
       {products.map((p) => (

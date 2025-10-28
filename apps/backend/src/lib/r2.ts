@@ -103,7 +103,6 @@ export async function upsertImageFromBytes(
     } as any,
   });
 
-  console.log("[r2:upsertImage] uploaded", { id: sha256, key, mime: mimeNorm, width, height, tenantId });
   return { id: sha256, key, mime: mimeNorm, width, height };
 }
 

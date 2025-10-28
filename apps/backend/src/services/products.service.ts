@@ -85,18 +85,6 @@ export const ProductsService = {
     const itemsBase = rows.map(toProductDTOBase);
     const items = await Promise.all(itemsBase.map(hydratePhoto));
 
-    // DEBUG: log what we actually send
-    for (const it of items) {
-      console.log("[products:list] item", {
-        id: it.id,
-        title: it.title,
-        active: it.active,
-        photoUrl: it.photoUrl,
-        apiImage: it.apiImage,
-      });
-    }
-    console.log("[products:list] summary", { categoryId: opts.categoryId ?? "all", page, perPage, items: items.length, total });
-
     return {
       items,
       total,

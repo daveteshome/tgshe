@@ -2,6 +2,7 @@ import { Markup } from 'telegraf';
 import { CartService } from '../../../services/cart.service';
 import { OrdersService } from '../../../services/orders.service';
 import { money } from '../../../lib/money';
+import { getTenantId } from '../../../services/tenant.util';
 
 const PLACEHOLDER = 'https://placehold.co/800x500/png?text=Product';
 
@@ -13,6 +14,7 @@ function photoInput(url?: string | null) {
 export const registerCartHandlers = (bot: any) => {
   // Add to cart (product card button)
   bot.action(/CART_ADD_(.+)/, async (ctx: any) => {
+    console.log("[BOT added] tenantId=", await getTenantId(), "userId=", String(ctx.from.id));
     await ctx.answerCbQuery('Added to cart');
     const productId = ctx.match[1];
     const userId = String(ctx.from.id);
@@ -21,9 +23,12 @@ export const registerCartHandlers = (bot: any) => {
 
   // View cart
   bot.action('CART_VIEW', async (ctx: any) => {
+    
     await ctx.answerCbQuery();
     const userId = String(ctx.from.id);
     const cart = await CartService.list(userId);
+    console.log("[BOT View] tenantId=", await getTenantId(), "userId=", String(ctx.from.id));
+
 
     if (!cart || cart.items.length === 0) {
       return ctx.reply('🧺 Your cart is empty.');
@@ -52,18 +57,22 @@ export const registerCartHandlers = (bot: any) => {
   });
 
   bot.action(/CART_INC_(.+)/, async (ctx: any) => {
+    console.log("[CART] on Increment in cart ts,,,,,,,,,,,........... =");
+    console.log("[BOT Inc] tenantId=", await getTenantId(), "userId=", String(ctx.from.id));
     await ctx.answerCbQuery('Increased');
     await CartService.inc(ctx.match[1]);
     await ctx.reply('Updated. Tap “🧺 View Cart” again to refresh.');
   });
 
   bot.action(/CART_DEC_(.+)/, async (ctx: any) => {
+    console.log("[BOT dec] tenantId=", await getTenantId(), "userId=", String(ctx.from.id));
     await ctx.answerCbQuery('Decreased');
     await CartService.dec(ctx.match[1]);
     await ctx.reply('Updated. Tap “🧺 View Cart” again to refresh.');
   });
 
   bot.action('CART_CLEAR', async (ctx: any) => {
+    console.log("[BOT clear] tenantId=", await getTenantId(), "userId=", String(ctx.from.id));
     await ctx.answerCbQuery('Cleared');
     await CartService.clear(String(ctx.from.id));
     await ctx.reply('🧺 Cart cleared.');
